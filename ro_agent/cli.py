@@ -470,7 +470,7 @@ async def run_interactive(
     def _(event: Any) -> None:
         event.app.current_buffer.validate_and_handle()
 
-    @key_bindings.add("s-enter")
+    @key_bindings.add("escape", "enter")
     def _(event: Any) -> None:
         event.app.current_buffer.insert_text("\n")
 
@@ -489,7 +489,7 @@ async def run_interactive(
         Panel(
             "[bold]ro-agent[/bold] - Read-only research assistant\n"
             f"Model: [cyan]{model}[/cyan]\n"
-            "Enter to send, Shift+Enter for newline.\n"
+            "Enter to send, Esc then Enter for newline.\n"
             "Type [bold]/help[/bold] for commands, [bold]exit[/bold] to quit.",
             border_style="green",
         )
