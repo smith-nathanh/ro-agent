@@ -89,14 +89,18 @@ class ListDirHandler(ToolHandler):
         """List directory contents in a flat format similar to ls -la."""
         entries = []
 
-        for entry in sorted(path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())):
+        for entry in sorted(
+            path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())
+        ):
             if not show_hidden and entry.name.startswith("."):
                 continue
 
             try:
                 stat_info = entry.stat()
                 size = stat_info.st_size
-                mtime = datetime.fromtimestamp(stat_info.st_mtime).strftime("%Y-%m-%d %H:%M")
+                mtime = datetime.fromtimestamp(stat_info.st_mtime).strftime(
+                    "%Y-%m-%d %H:%M"
+                )
                 mode = stat.filemode(stat_info.st_mode)
 
                 if entry.is_dir():
@@ -125,7 +129,12 @@ class ListDirHandler(ToolHandler):
         return "\n".join(entries)
 
     def _list_recursive(
-        self, path: Path, show_hidden: bool, max_depth: int, prefix: str = "", depth: int = 0
+        self,
+        path: Path,
+        show_hidden: bool,
+        max_depth: int,
+        prefix: str = "",
+        depth: int = 0,
     ) -> str:
         """List directory contents in a tree format."""
         if depth > max_depth:
@@ -135,7 +144,9 @@ class ListDirHandler(ToolHandler):
         entries = []
 
         try:
-            entries = sorted(path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower()))
+            entries = sorted(
+                path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())
+            )
         except PermissionError:
             return f"{prefix}[permission denied]\n"
 
@@ -157,7 +168,9 @@ class ListDirHandler(ToolHandler):
                     if subtree:
                         lines.append(subtree.rstrip("\n"))
             else:
-                size_str = self._format_size(entry.stat().st_size) if entry.exists() else "?"
+                size_str = (
+                    self._format_size(entry.stat().st_size) if entry.exists() else "?"
+                )
                 lines.append(f"{prefix}{connector}{entry.name} ({size_str})")
 
             if len(lines) >= DEFAULT_MAX_ENTRIES:

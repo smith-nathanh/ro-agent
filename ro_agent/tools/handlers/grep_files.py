@@ -214,12 +214,17 @@ class GrepFilesHandler(ToolHandler):
 
         output_lines = [f"{count:6d}  {path}" for path, count in results]
         total_matches = sum(count for _, count in results)
-        output_lines.append(f"\n[{total_matches} total matches in {len(results)} files]")
+        output_lines.append(
+            f"\n[{total_matches} total matches in {len(results)} files]"
+        )
 
         return ToolOutput(
             content="\n".join(output_lines),
             success=True,
-            metadata={"total_matches": total_matches, "files_with_matches": len(results)},
+            metadata={
+                "total_matches": total_matches,
+                "files_with_matches": len(results),
+            },
         )
 
     def _search_with_content(
@@ -244,7 +249,9 @@ class GrepFilesHandler(ToolHandler):
                     output_lines.append("")  # Blank line between files
                 output_lines.append(f"── {file_path} ──")
                 output_lines.extend(file_matches)
-                total_matches += len([line for line in file_matches if line.startswith(">")])
+                total_matches += len(
+                    [line for line in file_matches if line.startswith(">")]
+                )
 
         if not output_lines:
             return ToolOutput(
@@ -304,7 +311,9 @@ class GrepFilesHandler(ToolHandler):
             # The match itself
             if line_num not in shown_lines:
                 shown_lines.add(line_num)
-                output.append(f"> {line_num + 1:6d}  {_truncate_line(lines[line_num].rstrip())}")
+                output.append(
+                    f"> {line_num + 1:6d}  {_truncate_line(lines[line_num].rstrip())}"
+                )
 
             # Context after
             for i in range(line_num + 1, min(len(lines), line_num + context_lines + 1)):

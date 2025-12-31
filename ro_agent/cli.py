@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Annotated, Any, Iterable, Optional
 
 import typer
+import yaml
 from dotenv import load_dotenv
 
 # Load .env before anything else so env vars are available for defaults
@@ -22,6 +23,7 @@ from prompt_toolkit.completion import (
 from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
+from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
 from rich.panel import Panel
 
@@ -43,6 +45,7 @@ from .tools.registry import ToolRegistry
 # Config directory for ro-agent data
 CONFIG_DIR = Path.home() / ".config" / "ro-agent"
 HISTORY_FILE = CONFIG_DIR / "history"
+PROMPT_CONFIG_FILE = CONFIG_DIR / "prompts.yaml"
 
 # Rich console for all output
 console = Console()
@@ -70,12 +73,94 @@ Always use absolute paths in tool calls.
 """
 
 # Commands the user can type during the session
-COMMANDS = ["/approve", "/compact", "/help", "/clear", "exit", "quit"]
+COMMANDS = ["/approve", "/compact", "/help", "/clear", "/prompt", "exit", "quit"]
 
 # Pattern to detect path-like strings in text
 PATH_PATTERN = re.compile(
     r"(~/?|\.{1,2}/|/)?([a-zA-Z0-9_\-./]+/[a-zA-Z0-9_\-.]*|~[a-zA-Z0-9_\-./]*)$"
 )
+
+
+def load_prompt_config(path: Path) -> dict[str, Any] | None:
+    """Load prompt config YAML from disk."""
+    if not path.exists():
+        return None
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Failed to read prompt config: {exc}") from exc
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError("Prompt config must be a YAML mapping at the top level")
+    return data
+
+
+def build_repo_context(profile: dict[str, Any], working_dir: str) -> str:
+    """Build repo context text from inline content and files."""
+    parts: list[str] = []
+    inline = profile.get("repo_context")
+    if isinstance(inline, str) and inline.strip():
+        parts.append(inline.strip())
+
+    files = profile.get("repo_context_files", [])
+    if files:
+        if not isinstance(files, list):
+            raise ValueError("repo_context_files must be a list of file paths")
+        for entry in files:
+            if not isinstance(entry, str):
+                continue
+            path = Path(entry)
+            if not path.is_absolute():
+                path = Path(working_dir) / path
+            if not path.exists():
+                console.print(f"[yellow]Repo context file not found: {path}[/yellow]")
+                continue
+            try:
+                content = path.read_text(encoding="utf-8", errors="replace").strip()
+            except Exception as exc:
+                console.print(
+                    f"[yellow]Failed to read repo context file {path}: {exc}[/yellow]"
+                )
+                continue
+            if content:
+                parts.append(f"### {path}\n{content}")
+    return "\n\n".join(parts).strip()
+
+
+def build_system_prompt_from_profile(
+    profile_name: str,
+    config: dict[str, Any],
+    working_dir: str,
+) -> str:
+    """Build system prompt from a named profile."""
+    profiles = config.get("profiles", {})
+    if not isinstance(profiles, dict):
+        raise ValueError("profiles must be a mapping of profile names to configs")
+    if profile_name not in profiles:
+        raise ValueError(f"Profile '{profile_name}' not found in prompt config")
+    profile = profiles[profile_name]
+    if not isinstance(profile, dict):
+        raise ValueError(f"Profile '{profile_name}' must be a mapping")
+    template = profile.get("system_prompt")
+    if not isinstance(template, str) or not template.strip():
+        raise ValueError(f"Profile '{profile_name}' is missing system_prompt text")
+
+    repo_context = build_repo_context(profile, working_dir)
+    format_vars = {
+        "platform": platform.system(),
+        "home_dir": str(Path.home()),
+        "working_dir": working_dir,
+        "repo_context": repo_context,
+    }
+    try:
+        prompt = template.format(**format_vars)
+    except KeyError as exc:
+        raise ValueError(f"Unknown placeholder in system_prompt: {exc}") from exc
+
+    if repo_context and "{repo_context}" not in template:
+        prompt = f"{prompt}\n\n## Repo Context\n{repo_context}"
+    return prompt
 
 
 class InlinePathCompleter(Completer):
@@ -233,7 +318,7 @@ def handle_event(event: AgentEvent) -> None:
     elif event.type == "tool_end":
         result = event.tool_result or ""
         if len(result) > 2000:
-            result = result[:2000] + "\n... (truncated)"
+            result = result[:2000] + "\n... (truncated for display)"
         console.print(
             Panel(
                 result,
@@ -248,7 +333,9 @@ def handle_event(event: AgentEvent) -> None:
     elif event.type == "compact_start":
         trigger = event.content or "manual"
         if trigger == "auto":
-            console.print("[yellow]Context limit approaching, auto-compacting...[/yellow]")
+            console.print(
+                "[yellow]Context limit approaching, auto-compacting...[/yellow]"
+            )
         else:
             console.print("[yellow]Compacting conversation...[/yellow]")
 
@@ -272,7 +359,13 @@ def handle_event(event: AgentEvent) -> None:
         console.print(f"[red]Error: {event.content}[/red]")
 
 
-def handle_command(cmd: str, approval_handler: ApprovalHandler) -> str | None:
+def handle_command(
+    cmd: str,
+    approval_handler: ApprovalHandler,
+    session: Session,
+    prompt_config_path: Path,
+    working_dir: str,
+) -> str | None:
     """Handle slash commands.
 
     Returns:
@@ -291,15 +384,61 @@ def handle_command(cmd: str, approval_handler: ApprovalHandler) -> str | None:
             return f"compact:{parts[1]}"
         return "compact"
 
+    if cmd.startswith("/prompt"):
+        parts = cmd.split(maxsplit=1)
+        try:
+            config = load_prompt_config(prompt_config_path)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            return None
+        if not config:
+            console.print(
+                f"[yellow]Prompt config not found: {prompt_config_path}[/yellow]"
+            )
+            return None
+        profiles = config.get("profiles", {})
+        if len(parts) == 1:
+            if not isinstance(profiles, dict) or not profiles:
+                console.print("[yellow]No prompt profiles found.[/yellow]")
+                return None
+            default_name = config.get("default")
+            lines = ["[bold]Prompt profiles:[/bold]"]
+            for name in sorted(profiles.keys()):
+                suffix = " (default)" if name == default_name else ""
+                lines.append(f"  {name}{suffix}")
+            console.print(Panel("\n".join(lines), title="Prompts", border_style="blue"))
+            return None
+
+        profile_name = parts[1].strip()
+        if not profile_name:
+            console.print("[yellow]Usage: /prompt <profile>[/yellow]")
+            return None
+        try:
+            session.system_prompt = build_system_prompt_from_profile(
+                profile_name, config, working_dir
+            )
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            return None
+        console.print(f"[green]System prompt set to profile '{profile_name}'.[/green]")
+        console.print(
+            "[dim]Tip: use /compact or start a new session to align history.[/dim]"
+        )
+        return None
+
     if cmd == "/help":
         console.print(
             Panel(
                 "[bold]Commands:[/bold]\n"
                 "  /approve             - Enable auto-approve for all tool calls\n"
                 "  /compact [guidance]  - Compact conversation history\n"
+                "  /prompt [name]       - List or switch prompt profile\n"
                 "  /help                - Show this help\n"
                 "  /clear               - Clear the screen\n"
-                "  exit                 - Quit the session",
+                "  exit                 - Quit the session\n"
+                "\n[bold]Input:[/bold]\n"
+                "  Enter               - Send message\n"
+                "  Shift+Enter         - New line",
                 title="Help",
                 border_style="blue",
             )
@@ -316,17 +455,31 @@ def handle_command(cmd: str, approval_handler: ApprovalHandler) -> str | None:
 async def run_interactive(
     agent: Agent,
     approval_handler: ApprovalHandler,
+    session: Session,
     model: str,
-    working_dir: str | None,
+    working_dir: str,
+    prompt_config_path: Path,
 ) -> None:
     """Run an interactive REPL session."""
     # Ensure config directory exists
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
+    key_bindings = KeyBindings()
+
+    @key_bindings.add("enter")
+    def _(event: Any) -> None:
+        event.app.current_buffer.validate_and_handle()
+
+    @key_bindings.add("s-enter")
+    def _(event: Any) -> None:
+        event.app.current_buffer.insert_text("\n")
+
     # Prompt toolkit session with history and completion
     prompt_session: PromptSession[str] = PromptSession(
         history=FileHistory(str(HISTORY_FILE)),
         completer=create_completer(working_dir=working_dir),
+        multiline=True,
+        key_bindings=key_bindings,
         complete_while_typing=False,
         complete_in_thread=True,
     )
@@ -336,6 +489,7 @@ async def run_interactive(
         Panel(
             "[bold]ro-agent[/bold] - Read-only research assistant\n"
             f"Model: [cyan]{model}[/cyan]\n"
+            "Enter to send, Shift+Enter for newline.\n"
             "Type [bold]/help[/bold] for commands, [bold]exit[/bold] to quit.",
             border_style="green",
         )
@@ -360,18 +514,24 @@ async def run_interactive(
             break
 
         if user_input.startswith("/"):
-            action = handle_command(user_input, approval_handler)
+            action = handle_command(
+                user_input, approval_handler, session, prompt_config_path, working_dir
+            )
             if action and action.startswith("compact"):
                 # Handle /compact command
                 instructions = ""
                 if ":" in action:
                     instructions = action.split(":", 1)[1]
                 handle_event(AgentEvent(type="compact_start", content="manual"))
-                result = await agent.compact(custom_instructions=instructions, trigger="manual")
-                handle_event(AgentEvent(
-                    type="compact_end",
-                    content=f"Compacted: {result.tokens_before} → {result.tokens_after} tokens",
-                ))
+                result = await agent.compact(
+                    custom_instructions=instructions, trigger="manual"
+                )
+                handle_event(
+                    AgentEvent(
+                        type="compact_end",
+                        content=f"Compacted: {result.tokens_before} → {result.tokens_after} tokens",
+                    )
+                )
             continue
 
         # Run the turn and handle events
@@ -403,6 +563,14 @@ def main(
         Optional[str],
         typer.Option("--system", "-s", help="System prompt"),
     ] = None,
+    prompt_config: Annotated[
+        Optional[str],
+        typer.Option("--prompt-config", help="Path to prompt config YAML"),
+    ] = None,
+    profile: Annotated[
+        Optional[str],
+        typer.Option("--profile", help="Prompt profile name from config"),
+    ] = None,
     working_dir: Annotated[
         Optional[str],
         typer.Option(
@@ -420,15 +588,46 @@ def main(
         str(Path(working_dir).expanduser().resolve()) if working_dir else os.getcwd()
     )
 
+    prompt_config_path = (
+        Path(prompt_config).expanduser().resolve()
+        if prompt_config
+        else PROMPT_CONFIG_FILE
+    )
+
     # Build system prompt with environment context
     if system:
         system_prompt = system
     else:
-        system_prompt = DEFAULT_SYSTEM_PROMPT.format(
-            platform=platform.system(),
-            home_dir=str(Path.home()),
-            working_dir=resolved_working_dir,
-        )
+        config = None
+        try:
+            config = load_prompt_config(prompt_config_path)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
+
+        profile_name = profile
+        if not profile_name and config and config.get("default"):
+            profile_name = str(config.get("default"))
+
+        if profile_name:
+            if not config:
+                console.print(
+                    f"[red]Prompt profile requested but config not found: {prompt_config_path}[/red]"
+                )
+                raise typer.Exit(1)
+            try:
+                system_prompt = build_system_prompt_from_profile(
+                    profile_name, config, resolved_working_dir
+                )
+            except ValueError as exc:
+                console.print(f"[red]{exc}[/red]")
+                raise typer.Exit(1) from exc
+        else:
+            system_prompt = DEFAULT_SYSTEM_PROMPT.format(
+                platform=platform.system(),
+                home_dir=str(Path.home()),
+                working_dir=resolved_working_dir,
+            )
 
     # Set up components
     session = Session(system_prompt=system_prompt)
@@ -446,7 +645,16 @@ def main(
     if prompt:
         asyncio.run(run_single(agent, prompt))
     else:
-        asyncio.run(run_interactive(agent, approval_handler, model, working_dir))
+        asyncio.run(
+            run_interactive(
+                agent,
+                approval_handler,
+                session,
+                model,
+                resolved_working_dir,
+                prompt_config_path,
+            )
+        )
 
 
 if __name__ == "__main__":

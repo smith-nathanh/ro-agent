@@ -158,7 +158,9 @@ class ModelClient:
         except Exception as e:
             yield StreamEvent(type="error", content=str(e))
 
-    async def complete(self, messages: list[dict[str, Any]]) -> tuple[str, dict[str, int]]:
+    async def complete(
+        self, messages: list[dict[str, Any]]
+    ) -> tuple[str, dict[str, int]]:
         """Non-streaming completion for simple requests like summarization.
 
         Returns (content, usage_dict).
@@ -172,7 +174,9 @@ class ModelClient:
             content = response.choices[0].message.content or ""
             usage = {
                 "input_tokens": response.usage.prompt_tokens if response.usage else 0,
-                "output_tokens": response.usage.completion_tokens if response.usage else 0,
+                "output_tokens": response.usage.completion_tokens
+                if response.usage
+                else 0,
             }
             return content, usage
         except Exception as e:

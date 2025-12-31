@@ -216,7 +216,9 @@ class DatabaseHandler(ToolHandler):
                     success=False,
                 )
         except Exception as e:
-            return ToolOutput(content=f"{self.db_type.title()} error: {e}", success=False)
+            return ToolOutput(
+                content=f"{self.db_type.title()} error: {e}", success=False
+            )
 
     async def _handle_query(
         self, invocation: ToolInvocation, row_limit: int

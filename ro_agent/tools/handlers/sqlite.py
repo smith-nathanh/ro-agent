@@ -97,13 +97,17 @@ class SqliteHandler(DatabaseHandler):
         safe_name = table_name.replace("'", "''").replace('"', '""')
 
         # Primary key columns
-        cursor.execute(f"SELECT name FROM pragma_table_info('{safe_name}') WHERE pk > 0 ORDER BY pk")
+        cursor.execute(
+            f"SELECT name FROM pragma_table_info('{safe_name}') WHERE pk > 0 ORDER BY pk"
+        )
         pk_cols = [row[0] for row in cursor.fetchall()]
         if pk_cols:
             extra["primary_key"] = pk_cols
 
         # Indexes
-        cursor.execute(f"SELECT name || ' (' || CASE WHEN \"unique\" THEN 'UNIQUE' ELSE 'NONUNIQUE' END || ')' FROM pragma_index_list('{safe_name}')")
+        cursor.execute(
+            f"SELECT name || ' (' || CASE WHEN \"unique\" THEN 'UNIQUE' ELSE 'NONUNIQUE' END || ')' FROM pragma_index_list('{safe_name}')"
+        )
         indexes = [row[0] for row in cursor.fetchall()]
         if indexes:
             extra["indexes"] = indexes

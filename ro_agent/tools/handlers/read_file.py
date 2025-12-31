@@ -7,6 +7,8 @@ from ..base import ToolHandler, ToolInvocation, ToolOutput
 
 # Max lines to return by default to avoid overwhelming context
 DEFAULT_MAX_LINES = 500
+# Max characters per line to avoid huge single-line payloads
+MAX_LINE_LENGTH = 500
 
 
 class ReadFileHandler(ToolHandler):
@@ -68,33 +70,36 @@ class ReadFileHandler(ToolHandler):
             end_line = start_line + DEFAULT_MAX_LINES - 1
 
         try:
+            output_lines = []
+            total_lines = 0
+
             with open(path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
+                for line_no, line in enumerate(f, start=1):
+                    total_lines = line_no
+                    if line_no < start_line:
+                        continue
+                    if line_no > end_line:
+                        break
+                    formatted = line.rstrip()
+                    if len(formatted) > MAX_LINE_LENGTH:
+                        formatted = formatted[:MAX_LINE_LENGTH] + "..."
+                    output_lines.append(f"{line_no:6d}  {formatted}")
 
-            total_lines = len(lines)
-
-            # Clamp to actual file bounds
-            start_idx = start_line - 1  # Convert to 0-indexed
-            end_idx = min(end_line, total_lines)
-
-            if start_idx >= total_lines:
+            if total_lines < start_line:
                 return ToolOutput(
                     content=f"Start line {start_line} exceeds file length ({total_lines} lines)",
                     success=False,
                 )
 
-            selected_lines = lines[start_idx:end_idx]
-
-            # Format with line numbers
-            output_lines = []
-            for i, line in enumerate(selected_lines, start=start_line):
-                output_lines.append(f"{i:6d}  {line.rstrip()}")
+            end_idx = min(end_line, total_lines)
 
             content = "\n".join(output_lines)
 
             # Add metadata about truncation
             if end_idx < total_lines:
-                content += f"\n\n[Showing lines {start_line}-{end_idx} of {total_lines}]"
+                content += (
+                    f"\n\n[Showing lines {start_line}-{end_idx} of {total_lines}]"
+                )
 
             return ToolOutput(
                 content=content,

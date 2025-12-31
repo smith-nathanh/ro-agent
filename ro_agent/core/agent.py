@@ -44,7 +44,10 @@ def truncate_output(content: str, max_chars: int = MAX_TOOL_OUTPUT_CHARS) -> str
     """Truncate tool output to prevent context overflow."""
     if len(content) <= max_chars:
         return content
-    return content[:max_chars] + f"\n\n... (truncated, showing {max_chars} of {len(content)} chars)"
+    return (
+        content[:max_chars]
+        + f"\n\n... (truncated, showing {max_chars} of {len(content)} chars)"
+    )
 
 
 @dataclass
@@ -96,7 +99,9 @@ class Agent:
         self._context_limit = context_limit
         self._auto_compact = auto_compact
 
-    async def compact(self, custom_instructions: str = "", trigger: str = "manual") -> CompactResult:
+    async def compact(
+        self, custom_instructions: str = "", trigger: str = "manual"
+    ) -> CompactResult:
         """Compact the conversation history into a summary.
 
         Args:
@@ -118,7 +123,10 @@ class Agent:
 
         messages = [
             {"role": "system", "content": system},
-            {"role": "user", "content": f"Here is the conversation to summarize:\n\n{conversation_text}"},
+            {
+                "role": "user",
+                "content": f"Here is the conversation to summarize:\n\n{conversation_text}",
+            },
         ]
 
         # Get the summary from the model
@@ -162,7 +170,9 @@ class Agent:
                 if msg.get("tool_calls"):
                     for tc in msg["tool_calls"]:
                         func = tc.get("function", {})
-                        parts.append(f"Assistant called tool: {func.get('name', 'unknown')}")
+                        parts.append(
+                            f"Assistant called tool: {func.get('name', 'unknown')}"
+                        )
             elif role == "tool":
                 # Summarize tool results briefly
                 result = content or ""
@@ -281,7 +291,9 @@ class Agent:
             rejected = False
             for tool_id, tool_name, tool_args in pending_tool_calls:
                 # Check approval if callback is set and tool requires it
-                if self._approval_callback and self._registry.requires_approval(tool_name):
+                if self._approval_callback and self._registry.requires_approval(
+                    tool_name
+                ):
                     approved = await self._approval_callback(tool_name, tool_args)
                     if not approved:
                         # Must add result to keep API happy, then end turn

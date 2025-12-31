@@ -76,7 +76,9 @@ class Session:
         """Clear conversation history."""
         self.history.clear()
 
-    def replace_with_summary(self, summary: str, recent_user_messages: list[str] | None = None) -> None:
+    def replace_with_summary(
+        self, summary: str, recent_user_messages: list[str] | None = None
+    ) -> None:
         """Replace history with a compacted summary.
 
         Args:
