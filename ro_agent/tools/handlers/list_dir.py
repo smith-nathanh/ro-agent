@@ -70,14 +70,14 @@ class ListDirHandler(ToolHandler):
 
         try:
             if recursive:
-                content = self._list_recursive(path, show_hidden, max_depth)
+                content, item_count = self._list_recursive(path, show_hidden, max_depth)
             else:
-                content = self._list_flat(path, show_hidden)
+                content, item_count = self._list_flat(path, show_hidden)
 
             return ToolOutput(
                 content=content,
                 success=True,
-                metadata={"path": str(path), "recursive": recursive},
+                metadata={"path": str(path), "recursive": recursive, "item_count": item_count},
             )
 
         except PermissionError:
@@ -85,15 +85,18 @@ class ListDirHandler(ToolHandler):
         except Exception as e:
             return ToolOutput(content=f"Error listing directory: {e}", success=False)
 
-    def _list_flat(self, path: Path, show_hidden: bool) -> str:
+    def _list_flat(self, path: Path, show_hidden: bool) -> tuple[str, int]:
         """List directory contents in a flat format similar to ls -la."""
         entries = []
+        item_count = 0
 
         for entry in sorted(
             path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())
         ):
             if not show_hidden and entry.name.startswith("."):
                 continue
+
+            item_count += 1
 
             try:
                 stat_info = entry.stat()
@@ -124,9 +127,9 @@ class ListDirHandler(ToolHandler):
                 break
 
         if not entries:
-            return "(empty directory)"
+            return "(empty directory)", 0
 
-        return "\n".join(entries)
+        return "\n".join(entries), item_count
 
     def _list_recursive(
         self,
@@ -135,20 +138,21 @@ class ListDirHandler(ToolHandler):
         max_depth: int,
         prefix: str = "",
         depth: int = 0,
-    ) -> str:
+    ) -> tuple[str, int]:
         """List directory contents in a tree format."""
         if depth > max_depth:
-            return ""
+            return "", 0
 
         lines = []
         entries = []
+        item_count = 0
 
         try:
             entries = sorted(
                 path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())
             )
         except PermissionError:
-            return f"{prefix}[permission denied]\n"
+            return f"{prefix}[permission denied]\n", 0
 
         # Filter hidden if needed
         if not show_hidden:
@@ -159,12 +163,15 @@ class ListDirHandler(ToolHandler):
             connector = "└── " if is_last else "├── "
             child_prefix = prefix + ("    " if is_last else "│   ")
 
+            item_count += 1
+
             if entry.is_dir():
                 lines.append(f"{prefix}{connector}{entry.name}/")
                 if depth < max_depth:
-                    subtree = self._list_recursive(
+                    subtree, sub_count = self._list_recursive(
                         entry, show_hidden, max_depth, child_prefix, depth + 1
                     )
+                    item_count += sub_count
                     if subtree:
                         lines.append(subtree.rstrip("\n"))
             else:
@@ -177,7 +184,7 @@ class ListDirHandler(ToolHandler):
                 lines.append(f"{prefix}[... truncated]")
                 break
 
-        return "\n".join(lines)
+        return "\n".join(lines), item_count
 
     @staticmethod
     def _format_size(size: int) -> str:

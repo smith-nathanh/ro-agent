@@ -331,6 +331,59 @@ def _format_tool_signature(tool_name: str, tool_args: dict[str, Any] | None) -> 
     return f"{tool_name}({args_str})"
 
 
+def _format_tool_summary(
+    tool_name: str | None,
+    metadata: dict[str, Any] | None,
+    result: str | None,
+) -> str | None:
+    """Format a brief summary of tool results."""
+    if not tool_name:
+        return None
+
+    # Use metadata if available
+    if metadata:
+        if tool_name == "grep_files":
+            matches = metadata.get("total_matches", metadata.get("files_with_matches", 0))
+            files = metadata.get("files_with_matches", 0)
+            if matches and files:
+                return f"{matches} matches in {files} files"
+            elif files:
+                return f"{files} files match"
+            return "No matches"
+
+        if tool_name == "read_file":
+            total = metadata.get("total_lines", 0)
+            start = metadata.get("start_line", 1)
+            end = metadata.get("end_line", total)
+            if total:
+                return f"Read lines {start}-{end} of {total}"
+
+        if tool_name == "list_dir":
+            count = metadata.get("item_count", 0)
+            if count:
+                return f"{count} items"
+
+        if tool_name == "write_output":
+            size = metadata.get("size_bytes", 0)
+            lines = metadata.get("lines", 0)
+            path = metadata.get("path", "")
+            if size:
+                return f"Wrote {size} bytes ({lines} lines)"
+
+        if tool_name in ("oracle", "sqlite", "vertica"):
+            rows = metadata.get("row_count", metadata.get("table_count", 0))
+            if rows:
+                return f"{rows} rows"
+
+    # Fallback: count lines in result
+    if result:
+        lines = result.count("\n") + 1
+        if lines > 1:
+            return f"{lines} lines"
+
+    return None
+
+
 def handle_event(event: AgentEvent) -> None:
     """Handle an agent event by printing to console."""
     if event.type == "text":
@@ -343,8 +396,10 @@ def handle_event(event: AgentEvent) -> None:
         console.print(f"[cyan]{sig}[/cyan]")
 
     elif event.type == "tool_end":
-        # Don't show output - just let the agent summarize what it found
-        pass
+        # Show a brief summary of what the tool found
+        summary = _format_tool_summary(event.tool_name, event.tool_metadata, event.tool_result)
+        if summary:
+            console.print(f"[dim]  → {summary}[/dim]")
 
     elif event.type == "tool_blocked":
         console.print("[red]Command rejected[/red]")

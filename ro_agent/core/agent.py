@@ -59,6 +59,7 @@ class AgentEvent:
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None
     tool_result: str | None = None
+    tool_metadata: dict[str, Any] | None = None  # Metadata from tool output
     usage: dict[str, int] | None = None
 
 
@@ -340,6 +341,7 @@ class Agent:
                     type="tool_end",
                     tool_name=tool_name,
                     tool_result=truncated_content,
+                    tool_metadata=output.metadata,
                 )
 
             # Add tool results to history

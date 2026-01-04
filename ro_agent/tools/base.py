@@ -27,7 +27,7 @@ class ToolHandler(ABC):
     """Abstract base class for tool handlers.
 
     Each handler implements a specific tool capability (shell execution,
-    MCP routing, file reading, etc.).
+    database queries, file reading, etc.).
     """
 
     @property
