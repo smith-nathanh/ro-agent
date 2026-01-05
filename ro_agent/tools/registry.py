@@ -5,6 +5,38 @@ from typing import Any
 from .base import ToolHandler, ToolInvocation, ToolOutput
 
 
+def _coerce_arguments(arguments: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+    """Coerce argument types based on JSON schema (LLMs sometimes pass strings)."""
+    properties = schema.get("properties", {})
+    coerced = dict(arguments)
+
+    for key, value in arguments.items():
+        if key not in properties or value is None:
+            continue
+
+        expected_type = properties[key].get("type")
+
+        if expected_type == "boolean" and not isinstance(value, bool):
+            if isinstance(value, str):
+                coerced[key] = value.lower() in ("true", "1", "yes")
+            else:
+                coerced[key] = bool(value)
+
+        elif expected_type == "integer" and not isinstance(value, int):
+            try:
+                coerced[key] = int(value)
+            except (ValueError, TypeError):
+                pass  # Keep original, let handler deal with it
+
+        elif expected_type == "number" and not isinstance(value, (int, float)):
+            try:
+                coerced[key] = float(value)
+            except (ValueError, TypeError):
+                pass
+
+    return coerced
+
+
 class ToolRegistry:
     """Registry that stores tool handlers and dispatches invocations."""
 
@@ -36,8 +68,17 @@ class ToolRegistry:
                 content=f"Unknown tool: {invocation.tool_name}",
                 success=False,
             )
+
+        # Coerce argument types based on schema (LLMs sometimes pass strings)
+        coerced_args = _coerce_arguments(invocation.arguments, handler.parameters)
+        coerced_invocation = ToolInvocation(
+            call_id=invocation.call_id,
+            tool_name=invocation.tool_name,
+            arguments=coerced_args,
+        )
+
         try:
-            return await handler.handle(invocation)
+            return await handler.handle(coerced_invocation)
         except Exception as e:
             # Return error to agent so it can self-correct, don't crash CLI
             return ToolOutput(
