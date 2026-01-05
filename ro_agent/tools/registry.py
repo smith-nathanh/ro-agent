@@ -36,7 +36,14 @@ class ToolRegistry:
                 content=f"Unknown tool: {invocation.tool_name}",
                 success=False,
             )
-        return await handler.handle(invocation)
+        try:
+            return await handler.handle(invocation)
+        except Exception as e:
+            # Return error to agent so it can self-correct, don't crash CLI
+            return ToolOutput(
+                content=f"Tool '{invocation.tool_name}' failed: {type(e).__name__}: {e}\nArguments: {invocation.arguments}",
+                success=False,
+            )
 
     def __len__(self) -> int:
         return len(self._handlers)
