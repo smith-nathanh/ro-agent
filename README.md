@@ -143,8 +143,8 @@ The directory contains:
 
 > Find files with "error" in them
 
-grep_files(pattern='error', path='/home/user/proj/myapp', glob='*.py')
-  → 2 files match
+search(pattern='error', path='/home/user/proj/myapp', glob='*.py')
+  → 12 matches
 
 Found matches in:
 - src/api.py
@@ -152,8 +152,8 @@ Found matches in:
 
 > Show me the error handling in api.py
 
-grep_files(pattern='error', path='/home/user/proj/myapp/src/api.py', output_mode='content')
-  → 1 matches in 1 files
+search(pattern='error', path='/home/user/proj/myapp/src/api.py')
+  → 3 matches
 
 The error handling in api.py (line 43) catches exceptions from client
 requests and logs a warning before returning None:
@@ -188,25 +188,18 @@ list_dir(path="/project", recursive=true, max_depth=3) # tree view
 list_dir(path="/project", show_hidden=true)           # include dotfiles
 ```
 
-### `grep_files`
-Search for patterns across directory trees. Three output modes to control context usage:
-
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| `files_with_matches` (default) | Returns only file paths | Discover which files match |
-| `content` | Returns matching lines with context | See actual matches |
-| `count` | Returns match counts per file | Gauge match distribution |
+### `search`
+Search for patterns in files using ripgrep. Efficient for large log files—never loads files into memory.
 
 ```
 # Find all Python files containing "TODO"
-grep_files(pattern="TODO", path="/project/src", glob="*.py")
+search(pattern="TODO", path="/project/src", glob="*.py")
 
 # Search logs for errors, see surrounding context
-grep_files(pattern="ERROR|FATAL", path="/var/log", glob="*.log",
-           output_mode="content", context_lines=3)
+search(pattern="ERROR|FATAL", path="/var/log", glob="*.log", context_lines=3)
 
-# Count matches per file
-grep_files(pattern="import", path="/project", glob="*.py", output_mode="count")
+# Case-insensitive search with match limit
+search(pattern="error", path="/var/log", ignore_case=true, max_matches=50)
 ```
 
 ### `read_file`
@@ -319,7 +312,7 @@ ro_agent/tools/handlers/
 
 ## Safety
 
-- **Dedicated read-only tools**: `read_file`, `list_dir`, `grep_files` run without approval
+- **Dedicated read-only tools**: `read_file`, `list_dir`, `search` run without approval
 - **Shell allowlist**: Only safe commands allowed (grep, cat, jq, etc.)
 - **Dangerous pattern blocking**: Rejects rm, sudo, redirects, etc.
 - **Approval prompts**: Shell commands require confirmation (use `--auto-approve` to skip)
@@ -353,7 +346,7 @@ ro_agent/
     └── handlers/
         ├── read_file.py
         ├── list_dir.py
-        ├── grep_files.py
+        ├── search.py
         ├── shell.py
         ├── write_output.py  # Export findings to files
         ├── database.py      # Base class for DB handlers

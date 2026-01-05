@@ -111,35 +111,34 @@ ToolOutput(content: str, success: bool, metadata: dict)
 
 ## Core File Inspection Tools
 
-### `grep_files` — Pattern Search (`tools/handlers/grep_files.py`)
+### `search` — Pattern Search (`tools/handlers/search.py`)
 
-**Purpose:** Search file contents with regex patterns. Mirrors Claude Code's Grep tool.
+**Purpose:** Search file contents with regex patterns using ripgrep. Efficient for large log files—never loads files into memory.
 
 **Parameters:**
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | `pattern` | string | ✓ | Regex pattern |
 | `path` | string | ✓ | Directory or file to search |
-| `glob` | string | | Filter files (e.g., `*.py`) |
-| `output_mode` | enum | | `files_with_matches` (default), `content`, `count` |
+| `glob` | string | | Filter files (e.g., `*.py`, `*.log`) |
 | `ignore_case` | bool | | Case-insensitive search |
-| `context_lines` | int | | Lines before/after match |
-| `head_limit` | int | | Max results (default: 50) |
+| `context_lines` | int | | Lines before/after match (default: 0) |
+| `max_matches` | int | | Max results (default: 100) |
 
 **Key Implementation Details:**
 
-1. **File Collection** (`_collect_files` line 139):
-   - Walks directory tree
-   - Filters by glob pattern
-   - Skips `.git`, `__pycache__`, `node_modules`, `.venv`
-   - Max 500 files per search
+1. **Uses ripgrep (`rg`)** via subprocess:
+   - Streams through files without loading into memory
+   - Handles multi-GB log files efficiently
+   - 30-second timeout protection
 
-2. **Three Output Modes:**
-   - `files_with_matches`: Just file paths that contain the pattern
-   - `content`: Matching lines with optional context (prefixed `>` for matches)
-   - `count`: Match counts per file in format `   123  /path/to/file.py`
+2. **Output Format:**
+   ```
+   /path/to/file.py:42:    def handle_error(self):
+   /path/to/file.py:58:        raise CustomError("failed")
+   ```
 
-3. **Safety:** Lines truncated at 500 chars
+3. **Auto-skips:** `.git/`, `node_modules/`, `__pycache__/`, `.venv/`
 
 **Requires Approval:** No
 
@@ -412,9 +411,8 @@ Agent(session, registry, client, approval_callback)
 | Context limit | 100,000 tokens | `agent.py:16` |
 | Auto-compact threshold | 80% | `agent.py:17` |
 | Shell timeout | 120 seconds | `shell.py:9` |
-| Max grep results | 50 | `grep_files.py:11` |
-| Max files per grep | 500 | `grep_files.py:12` |
-| Max line length | 500 chars | `grep_files.py:13` |
+| Max search matches | 100 | `search.py:11` |
+| Search timeout | 30 seconds | `search.py:13` |
 | Max dir entries | 200 | `list_dir.py:12` |
 | Max DB rows | 100 | `database.py:29` |
 

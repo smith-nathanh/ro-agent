@@ -33,11 +33,11 @@ from .core.session import Session
 from .templates import load_template, prepare_template
 from .templates.renderer import parse_vars
 from .tools.handlers import (
-    GrepFilesHandler,
     ListDirHandler,
     OracleHandler,
     ReadExcelHandler,
     ReadFileHandler,
+    SearchHandler,
     ShellHandler,
     SqliteHandler,
     VerticaHandler,
@@ -258,7 +258,7 @@ def create_registry(working_dir: str | None = None) -> ToolRegistry:
     registry.register(ReadFileHandler())
     registry.register(ReadExcelHandler())
     registry.register(ListDirHandler())
-    registry.register(GrepFilesHandler())
+    registry.register(SearchHandler())
     # Shell for commands that need it (jq, custom tools, etc.)
     registry.register(ShellHandler(working_dir=working_dir))
     # Output tool for exporting findings
@@ -333,13 +333,12 @@ def _format_tool_summary(
 
     # Use metadata if available
     if metadata:
-        if tool_name == "grep_files":
-            matches = metadata.get("total_matches", metadata.get("files_with_matches", 0))
-            files = metadata.get("files_with_matches", 0)
-            if matches and files:
-                return f"{matches} matches in {files} files"
-            elif files:
-                return f"{files} files match"
+        if tool_name == "search":
+            matches = metadata.get("matches", 0)
+            truncated = metadata.get("truncated", False)
+            if matches:
+                suffix = "+" if truncated else ""
+                return f"{matches}{suffix} matches"
             return "No matches"
 
         if tool_name == "read_file":
