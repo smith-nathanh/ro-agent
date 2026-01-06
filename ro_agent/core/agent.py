@@ -1,5 +1,6 @@
 """Core agent loop for ro-agent."""
 
+import asyncio
 from collections.abc import AsyncIterator, Callable, Awaitable
 from dataclasses import dataclass
 from typing import Any
@@ -54,7 +55,7 @@ def truncate_output(content: str, max_chars: int = MAX_TOOL_OUTPUT_CHARS) -> str
 class AgentEvent:
     """Event emitted by the agent during execution."""
 
-    type: str  # "text", "tool_start", "tool_end", "turn_complete", "error", "tool_blocked", "compact_start", "compact_end"
+    type: str  # "text", "tool_start", "tool_end", "turn_complete", "error", "tool_blocked", "compact_start", "compact_end", "cancelled"
     content: str | None = None
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None
@@ -99,6 +100,19 @@ class Agent:
         self._approval_callback = approval_callback
         self._context_limit = context_limit
         self._auto_compact = auto_compact
+        self._cancel_requested = False
+
+    def request_cancel(self) -> None:
+        """Request cancellation of the current turn."""
+        self._cancel_requested = True
+
+    def _reset_cancel(self) -> None:
+        """Reset cancellation state for a new turn."""
+        self._cancel_requested = False
+
+    def is_cancelled(self) -> bool:
+        """Check if cancellation has been requested."""
+        return self._cancel_requested
 
     async def compact(
         self, custom_instructions: str = "", trigger: str = "manual"
@@ -195,7 +209,10 @@ class Agent:
         """Run a single conversation turn.
 
         This may involve multiple model calls if tools are invoked.
+        Yields AgentEvent(type="cancelled") if cancellation is requested.
         """
+        self._reset_cancel()
+
         # Check if auto-compaction is needed before processing
         if self.should_auto_compact():
             yield AgentEvent(type="compact_start", content="auto")
@@ -210,6 +227,10 @@ class Agent:
 
         # Loop until we get a final response (no more tool calls)
         while True:
+            # Check for cancellation before model call
+            if self.is_cancelled():
+                yield AgentEvent(type="cancelled", content="Cancelled before model call")
+                return
             # Build prompt
             prompt = Prompt(
                 system=self._session.system_prompt,
@@ -234,6 +255,11 @@ class Agent:
 
             # Stream response
             async for event in self._client.stream(prompt):
+                # Check for cancellation during streaming
+                if self.is_cancelled():
+                    yield AgentEvent(type="cancelled", content="Cancelled during model response")
+                    return
+
                 if event.type == "text":
                     text_content += event.content or ""
                     yield AgentEvent(type="text", content=event.content)
@@ -291,6 +317,11 @@ class Agent:
             tool_results: list[ToolResult] = []
             rejected = False
             for tool_id, tool_name, tool_args in pending_tool_calls:
+                # Check for cancellation before each tool
+                if self.is_cancelled():
+                    yield AgentEvent(type="cancelled", content="Cancelled before tool execution")
+                    return
+
                 # Check approval if callback is set and tool requires it
                 if self._approval_callback and self._registry.requires_approval(
                     tool_name

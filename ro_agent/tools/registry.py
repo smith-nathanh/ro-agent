@@ -1,5 +1,6 @@
 """Tool registry for storing and dispatching to handlers."""
 
+import asyncio
 from typing import Any
 
 from .base import ToolHandler, ToolInvocation, ToolOutput
@@ -79,6 +80,9 @@ class ToolRegistry:
 
         try:
             return await handler.handle(coerced_invocation)
+        except asyncio.CancelledError:
+            # Let cancellation propagate up - don't swallow it
+            raise
         except Exception as e:
             # Return error to agent so it can self-correct, don't crash CLI
             return ToolOutput(

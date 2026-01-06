@@ -4,6 +4,7 @@ import asyncio
 import os
 import platform
 import re
+import signal
 from pathlib import Path
 from typing import Annotated, Any, Iterable, Optional
 
@@ -555,7 +556,7 @@ async def run_interactive(
         Panel(
             "[bold]ro-agent[/bold] - Read-only research assistant\n"
             f"Model: [cyan]{model}[/cyan]\n"
-            "Enter to send, Esc then Enter for newline.\n"
+            "Enter to send, Esc+Enter for newline, Ctrl+C to cancel.\n"
             "Type [bold]/help[/bold] for commands, [bold]exit[/bold] to quit.",
             border_style="green",
         )
@@ -600,15 +601,49 @@ async def run_interactive(
                 )
             continue
 
-        # Run the turn and handle events
-        async for event in agent.run_turn(user_input):
-            handle_event(event)
+        # Run the turn and handle events with cancellation support
+        loop = asyncio.get_event_loop()
+
+        def on_cancel():
+            console.print("\n[yellow]Cancelling...[/yellow]")
+            agent.request_cancel()
+
+        # Register signal handler for this turn (Unix only)
+        if platform.system() != "Windows":
+            loop.add_signal_handler(signal.SIGINT, on_cancel)
+
+        try:
+            async for event in agent.run_turn(user_input):
+                if event.type == "cancelled":
+                    console.print("[dim]Turn cancelled[/dim]")
+                    break
+                handle_event(event)
+        finally:
+            # Remove signal handler after turn
+            if platform.system() != "Windows":
+                loop.remove_signal_handler(signal.SIGINT)
 
 
 async def run_single(agent: Agent, prompt: str) -> None:
     """Run a single prompt and exit."""
-    async for event in agent.run_turn(prompt):
-        handle_event(event)
+    loop = asyncio.get_event_loop()
+
+    def on_cancel():
+        console.print("\n[yellow]Cancelling...[/yellow]")
+        agent.request_cancel()
+
+    if platform.system() != "Windows":
+        loop.add_signal_handler(signal.SIGINT, on_cancel)
+
+    try:
+        async for event in agent.run_turn(prompt):
+            if event.type == "cancelled":
+                console.print("[dim]Cancelled[/dim]")
+                break
+            handle_event(event)
+    finally:
+        if platform.system() != "Windows":
+            loop.remove_signal_handler(signal.SIGINT)
 
 
 async def run_single_with_output(agent: Agent, prompt: str, output_path: str) -> bool:
@@ -625,12 +660,33 @@ async def run_single_with_output(agent: Agent, prompt: str, output_path: str) ->
         return False
 
     collected_text: list[str] = []
+    cancelled = False
 
-    async for event in agent.run_turn(prompt):
-        handle_event(event)
-        # Collect text for output file
-        if event.type == "text" and event.content:
-            collected_text.append(event.content)
+    loop = asyncio.get_event_loop()
+
+    def on_cancel():
+        console.print("\n[yellow]Cancelling...[/yellow]")
+        agent.request_cancel()
+
+    if platform.system() != "Windows":
+        loop.add_signal_handler(signal.SIGINT, on_cancel)
+
+    try:
+        async for event in agent.run_turn(prompt):
+            if event.type == "cancelled":
+                console.print("[dim]Cancelled[/dim]")
+                cancelled = True
+                break
+            handle_event(event)
+            # Collect text for output file
+            if event.type == "text" and event.content:
+                collected_text.append(event.content)
+    finally:
+        if platform.system() != "Windows":
+            loop.remove_signal_handler(signal.SIGINT)
+
+    if cancelled:
+        return False
 
     # Write collected text to output file
     try:

@@ -102,6 +102,11 @@ class FindFilesHandler(ToolHandler):
                     process.communicate(),
                     timeout=self._timeout,
                 )
+            except asyncio.CancelledError:
+                # Clean up subprocess on cancellation
+                process.kill()
+                await process.wait()
+                raise
             except asyncio.TimeoutError:
                 process.kill()
                 await process.wait()
