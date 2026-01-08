@@ -64,7 +64,7 @@ async def run_agent_with_tools(
 
     # Create model client (uses OPENAI_API_KEY and OPENAI_BASE_URL from env)
     client = ModelClient(
-        model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-5-nano"),
         base_url=os.environ.get("OPENAI_BASE_URL"),
     )
 

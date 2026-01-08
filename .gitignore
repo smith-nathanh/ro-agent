@@ -18,3 +18,4 @@ wheels/
 !ARCHITECTURE.md
 
 .ro_agent_history
+test_data.db

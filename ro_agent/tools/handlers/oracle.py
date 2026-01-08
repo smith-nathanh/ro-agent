@@ -33,6 +33,15 @@ class OracleHandler(DatabaseHandler):
     def db_type(self) -> str:
         return "oracle"
 
+    @property
+    def description(self) -> str:
+        conn_info = f"{self._user}@{self._dsn}" if self._user else self._dsn
+        return (
+            f"Query the Oracle database at {conn_info}. "
+            f"Use 'list_tables' to see available tables, 'describe' for table schema, "
+            f"'query' for SELECT queries. All operations are read-only."
+        )
+
     def _get_connection(self) -> Any:
         if not ORACLEDB_AVAILABLE:
             raise RuntimeError("oracledb package not installed. Run: uv add oracledb")

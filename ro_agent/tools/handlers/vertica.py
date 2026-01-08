@@ -37,6 +37,15 @@ class VerticaHandler(DatabaseHandler):
     def db_type(self) -> str:
         return "vertica"
 
+    @property
+    def description(self) -> str:
+        conn_info = f"{self._host}:{self._port}/{self._database}"
+        return (
+            f"Query the Vertica database at {conn_info}. "
+            f"Use 'list_tables' to see available tables, 'describe' for table schema, "
+            f"'query' for SELECT queries. All operations are read-only."
+        )
+
     def _get_connection(self) -> Any:
         if not VERTICA_AVAILABLE:
             raise RuntimeError(

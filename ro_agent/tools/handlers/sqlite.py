@@ -24,6 +24,14 @@ class SqliteHandler(DatabaseHandler):
     def db_type(self) -> str:
         return "sqlite"
 
+    @property
+    def description(self) -> str:
+        return (
+            f"Query the SQLite database at {self._db_path}. "
+            f"Use 'list_tables' to see available tables, 'describe' for table schema, "
+            f"'query' for SELECT queries. All operations are read-only."
+        )
+
     def _get_connection(self) -> sqlite3.Connection:
         if not self._db_path:
             raise RuntimeError("No SQLite database configured. Set SQLITE_DB env var.")
