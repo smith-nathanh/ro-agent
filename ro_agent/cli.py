@@ -5,6 +5,7 @@ import os
 import platform
 import re
 import signal
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Iterable, Optional
 
@@ -30,6 +31,7 @@ from rich.panel import Panel
 
 from .client.model import ModelClient
 from .core.agent import Agent, AgentEvent
+from .core.conversations import ConversationStore
 from .core.session import Session
 from .templates import load_template, prepare_template
 from .templates.renderer import parse_vars
@@ -519,7 +521,11 @@ def handle_command(
                 "  exit                 - Quit the session\n"
                 "\n[bold]Input:[/bold]\n"
                 "  Enter               - Send message\n"
-                "  Shift+Enter         - New line",
+                "  Esc+Enter           - New line\n"
+                "\n[bold]Conversations:[/bold]\n"
+                "  ro-agent --list     - List saved conversations\n"
+                "  ro-agent -r latest  - Resume most recent conversation\n"
+                "  ro-agent -r <id>    - Resume specific conversation",
                 title="Help",
                 border_style="blue",
             )
@@ -540,6 +546,9 @@ async def run_interactive(
     model: str,
     working_dir: str,
     prompt_config_path: Path,
+    conversation_store: ConversationStore,
+    session_started: datetime,
+    conversation_id: str | None = None,
 ) -> None:
     """Run an interactive REPL session."""
     # Ensure config directory exists
@@ -584,14 +593,12 @@ async def run_interactive(
             )
             user_input = user_input.strip()
         except (EOFError, KeyboardInterrupt):
-            console.print("\n[dim]Goodbye![/dim]")
             break
 
         if not user_input:
             continue
 
         if user_input.lower() in ("exit", "quit"):
-            console.print("[dim]Goodbye![/dim]")
             break
 
         if user_input.startswith("/"):
@@ -636,6 +643,21 @@ async def run_interactive(
             # Remove signal handler after turn
             if platform.system() != "Windows":
                 loop.remove_signal_handler(signal.SIGINT)
+
+    # Save conversation on exit (only if there's history)
+    if session.history:
+        saved_path = conversation_store.save(
+            model=model,
+            system_prompt=session.system_prompt,
+            history=session.history,
+            input_tokens=session.total_input_tokens,
+            output_tokens=session.total_output_tokens,
+            started=session_started,
+            conversation_id=conversation_id,
+        )
+        console.print(f"\n[dim]Goodbye! Conversation saved to {saved_path}[/dim]")
+    else:
+        console.print("\n[dim]Goodbye![/dim]")
 
 
 async def run_single(agent: Agent, prompt: str) -> None:
@@ -765,8 +787,61 @@ def main(
         bool,
         typer.Option("--auto-approve", "-y", help="Auto-approve all tool calls"),
     ] = False,
+    resume: Annotated[
+        Optional[str],
+        typer.Option(
+            "--resume",
+            "-r",
+            help="Resume a conversation (use 'latest' or a conversation ID)",
+        ),
+    ] = None,
+    list_conversations: Annotated[
+        bool,
+        typer.Option("--list", "-l", help="List saved conversations and exit"),
+    ] = False,
 ) -> None:
     """ro-agent: A read-only research assistant."""
+    # Initialize conversation store
+    conversation_store = ConversationStore(CONFIG_DIR)
+
+    # Handle --list: show saved conversations and exit
+    if list_conversations:
+        conversations = conversation_store.list_conversations()
+        if not conversations:
+            console.print("[dim]No saved conversations found.[/dim]")
+            raise typer.Exit(0)
+
+        console.print("[bold]Saved conversations:[/bold]\n")
+        for conv in conversations:
+            # Parse the started time for display
+            try:
+                started_dt = datetime.fromisoformat(conv.started)
+                time_str = started_dt.strftime("%Y-%m-%d %H:%M")
+            except ValueError:
+                time_str = conv.id
+            console.print(f"[cyan]{conv.id}[/cyan]  {time_str}  [dim]{conv.model}[/dim]")
+            console.print(f"  {conv.display_preview}")
+            console.print()
+        raise typer.Exit(0)
+
+    # Handle --resume: load a previous conversation
+    conversation_id: str | None = None
+    resumed_conversation = None
+    if resume:
+        if resume.lower() == "latest":
+            conversation_id = conversation_store.get_latest_id()
+            if not conversation_id:
+                console.print("[red]No saved conversations to resume.[/red]")
+                raise typer.Exit(1)
+        else:
+            conversation_id = resume
+
+        resumed_conversation = conversation_store.load(conversation_id)
+        if not resumed_conversation:
+            console.print(f"[red]Conversation not found: {conversation_id}[/red]")
+            console.print("[dim]Use --list to see saved conversations.[/dim]")
+            raise typer.Exit(1)
+
     # Resolve working directory
     resolved_working_dir = (
         str(Path(working_dir).expanduser().resolve()) if working_dir else os.getcwd()
@@ -778,11 +853,17 @@ def main(
         else PROMPT_CONFIG_FILE
     )
 
-    # Build system prompt and initial prompt
-    initial_prompt: str | None = None
+    # Track when session started
+    session_started = datetime.now()
 
-    # Template mode takes precedence
-    if template:
+    # Build system prompt and initial prompt (skip if resuming)
+    initial_prompt: str | None = None
+    system_prompt: str = ""
+
+    if resumed_conversation:
+        # System prompt will be loaded from the conversation
+        pass
+    elif template:
         try:
             tmpl = load_template(template)
         except ValueError as exc:
@@ -855,10 +936,23 @@ def main(
                 working_dir=resolved_working_dir,
             )
 
-    # Set up components
-    session = Session(system_prompt=system_prompt)
+    # Set up components - use resumed conversation if available
+    if resumed_conversation:
+        session = Session(system_prompt=resumed_conversation.system_prompt)
+        session.history = resumed_conversation.history.copy()
+        session.total_input_tokens = resumed_conversation.input_tokens
+        session.total_output_tokens = resumed_conversation.output_tokens
+        # Use the model from resumed conversation unless explicitly overridden
+        effective_model = model if model != os.getenv("OPENAI_MODEL", "gpt-5-nano") else resumed_conversation.model
+        # Parse the original start time
+        session_started = datetime.fromisoformat(resumed_conversation.started)
+        console.print(f"[green]Resuming conversation: {conversation_id}[/green]")
+    else:
+        session = Session(system_prompt=system_prompt)
+        effective_model = model
+
     registry = create_registry(working_dir=resolved_working_dir)
-    client = ModelClient(model=model, base_url=base_url)
+    client = ModelClient(model=effective_model, base_url=base_url)
     approval_handler = ApprovalHandler(auto_approve=auto_approve)
 
     agent = Agent(
@@ -885,9 +979,12 @@ def main(
                 agent,
                 approval_handler,
                 session,
-                model,
+                effective_model,
                 resolved_working_dir,
                 prompt_config_path,
+                conversation_store,
+                session_started,
+                conversation_id,
             )
         )
 

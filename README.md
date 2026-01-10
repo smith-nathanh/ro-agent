@@ -328,7 +328,53 @@ OPENAI_BASE_URL=http://your-vllm-server:8000/v1  # optional
 OPENAI_MODEL=gpt-4o  # optional
 ```
 
-History is stored at `~/.config/ro-agent/history`.
+### Prompt Profiles
+
+Customize the system prompt with profiles in `~/.config/ro-agent/prompts.yaml`:
+
+```yaml
+default: general
+
+profiles:
+  general:
+    system_prompt: |
+      You are a research assistant.
+      Working directory: {working_dir}
+
+  oracle-dba:
+    system_prompt: |
+      You are an Oracle database expert.
+      {repo_context}
+    repo_context: |
+      Common schemas: SALES, INVENTORY
+    repo_context_files:
+      - docs/schema.md
+```
+
+Available placeholders: `{platform}`, `{home_dir}`, `{working_dir}`, `{repo_context}`
+
+```bash
+ro-agent --profile oracle-dba    # start with profile
+/prompt                          # list profiles in session
+/prompt oracle-dba               # switch profile
+```
+
+See `examples/prompts.yaml` for more examples.
+
+### Conversations
+
+Conversations are automatically saved on exit to `~/.config/ro-agent/conversations/`.
+
+```bash
+ro-agent --list              # list saved conversations
+ro-agent --resume latest     # resume most recent
+ro-agent -r 2024-01-10_14-30 # resume by ID
+```
+
+Data stored in `~/.config/ro-agent/`:
+- `history` - command line history
+- `prompts.yaml` - prompt profiles
+- `conversations/` - saved conversations
 
 ## Architecture
 
