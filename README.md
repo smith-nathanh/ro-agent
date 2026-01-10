@@ -371,6 +371,8 @@ ro-agent --resume latest     # resume most recent
 ro-agent -r 2024-01-10_14-30 # resume by ID
 ```
 
+The full history is saved including user messages, assistant responses, tool calls, and tool results (e.g., query output, file contents). When you resume, the agent has full context of what it already found.
+
 Data stored in `~/.config/ro-agent/`:
 - `history` - command line history
 - `prompts.yaml` - prompt profiles
