@@ -169,12 +169,23 @@ def build_system_prompt_from_profile(
         raise ValueError(f"Profile '{profile_name}' is missing system_prompt text")
 
     repo_context = build_repo_context(profile, working_dir)
-    format_vars = {
+
+    # Reserved keys that have special meaning
+    reserved_keys = {"system_prompt", "repo_context", "repo_context_files"}
+
+    # Start with built-in variables
+    format_vars: dict[str, Any] = {
         "platform": platform.system(),
         "home_dir": str(Path.home()),
         "working_dir": working_dir,
         "repo_context": repo_context,
     }
+
+    # Add all custom keys from the profile as additional variables
+    for key, value in profile.items():
+        if key not in reserved_keys and isinstance(value, str):
+            format_vars[key] = value
+
     try:
         prompt = template.format(**format_vars)
     except KeyError as exc:
