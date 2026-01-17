@@ -33,8 +33,7 @@ from .client.model import ModelClient
 from .core.agent import Agent, AgentEvent
 from .core.conversations import ConversationStore
 from .core.session import Session
-from .templates import load_template, prepare_template
-from .templates.renderer import parse_vars
+from .prompts import load_prompt, parse_vars, prepare_prompt
 from .tools.handlers import (
     FindFilesHandler,
     ListDirHandler,
@@ -52,7 +51,7 @@ from .tools.registry import ToolRegistry
 # Config directory for ro-agent data
 CONFIG_DIR = Path.home() / ".config" / "ro-agent"
 HISTORY_FILE = CONFIG_DIR / "history"
-PROMPT_CONFIG_FILE = CONFIG_DIR / "prompts.yaml"
+DEFAULT_PROMPT_FILE = CONFIG_DIR / "default-system.md"
 
 # Tool output preview lines (0 to disable)
 TOOL_PREVIEW_LINES = int(os.getenv("RO_AGENT_PREVIEW_LINES", "6"))
@@ -98,105 +97,12 @@ Always use absolute paths in tool calls.
 """
 
 # Commands the user can type during the session
-COMMANDS = ["/approve", "/compact", "/help", "/clear", "/prompt", "exit", "quit"]
+COMMANDS = ["/approve", "/compact", "/help", "/clear", "exit", "quit"]
 
 # Pattern to detect path-like strings in text
 PATH_PATTERN = re.compile(
     r"(~/?|\.{1,2}/|/)?([a-zA-Z0-9_\-./]+/[a-zA-Z0-9_\-.]*|~[a-zA-Z0-9_\-./]*)$"
 )
-
-
-def load_prompt_config(path: Path) -> dict[str, Any] | None:
-    """Load prompt config YAML from disk."""
-    if not path.exists():
-        return None
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise ValueError(f"Failed to read prompt config: {exc}") from exc
-    if data is None:
-        return {}
-    if not isinstance(data, dict):
-        raise ValueError("Prompt config must be a YAML mapping at the top level")
-    return data
-
-
-def build_repo_context(profile: dict[str, Any], working_dir: str) -> str:
-    """Build repo context text from inline content and files."""
-    parts: list[str] = []
-    inline = profile.get("repo_context")
-    if isinstance(inline, str) and inline.strip():
-        parts.append(inline.strip())
-
-    files = profile.get("repo_context_files", [])
-    if files:
-        if not isinstance(files, list):
-            raise ValueError("repo_context_files must be a list of file paths")
-        for entry in files:
-            if not isinstance(entry, str):
-                continue
-            path = Path(entry)
-            if not path.is_absolute():
-                path = Path(working_dir) / path
-            if not path.exists():
-                console.print(f"[yellow]Repo context file not found: {path}[/yellow]")
-                continue
-            try:
-                content = path.read_text(encoding="utf-8", errors="replace").strip()
-            except Exception as exc:
-                console.print(
-                    f"[yellow]Failed to read repo context file {path}: {exc}[/yellow]"
-                )
-                continue
-            if content:
-                parts.append(f"### {path}\n{content}")
-    return "\n\n".join(parts).strip()
-
-
-def build_system_prompt_from_profile(
-    profile_name: str,
-    config: dict[str, Any],
-    working_dir: str,
-) -> str:
-    """Build system prompt from a named profile."""
-    profiles = config.get("profiles", {})
-    if not isinstance(profiles, dict):
-        raise ValueError("profiles must be a mapping of profile names to configs")
-    if profile_name not in profiles:
-        raise ValueError(f"Profile '{profile_name}' not found in prompt config")
-    profile = profiles[profile_name]
-    if not isinstance(profile, dict):
-        raise ValueError(f"Profile '{profile_name}' must be a mapping")
-    template = profile.get("system_prompt")
-    if not isinstance(template, str) or not template.strip():
-        raise ValueError(f"Profile '{profile_name}' is missing system_prompt text")
-
-    repo_context = build_repo_context(profile, working_dir)
-
-    # Reserved keys that have special meaning
-    reserved_keys = {"system_prompt", "repo_context", "repo_context_files"}
-
-    # Start with built-in variables
-    format_vars: dict[str, Any] = {
-        "platform": platform.system(),
-        "home_dir": str(Path.home()),
-        "working_dir": working_dir,
-        "repo_context": repo_context,
-    }
-
-    # Add all custom keys from the profile as additional variables
-    for key, value in profile.items():
-        if key not in reserved_keys and isinstance(value, str):
-            format_vars[key] = value
-
-    try:
-        prompt = template.format(**format_vars)
-    except KeyError as exc:
-        raise ValueError(f"Unknown placeholder in system_prompt: {exc}") from exc
-
-    if repo_context and "{repo_context}" not in template:
-        prompt = f"{prompt}\n\n## Repo Context\n{repo_context}"
-    return prompt
 
 
 class InlinePathCompleter(Completer):
@@ -407,7 +313,9 @@ def _format_tool_summary(
     return None
 
 
-def _format_tool_preview(result: str | None, max_lines: int | None = None) -> str | None:
+def _format_tool_preview(
+    result: str | None, max_lines: int | None = None
+) -> str | None:
     """Get first N lines of tool output as a preview."""
     if max_lines is None:
         max_lines = TOOL_PREVIEW_LINES
@@ -438,7 +346,9 @@ def handle_event(event: AgentEvent) -> None:
 
     elif event.type == "tool_end":
         # Show a brief summary of what the tool found
-        summary = _format_tool_summary(event.tool_name, event.tool_metadata, event.tool_result)
+        summary = _format_tool_summary(
+            event.tool_name, event.tool_metadata, event.tool_result
+        )
         if summary:
             console.print(f"[dim]  → {summary}[/dim]")
 
@@ -484,9 +394,6 @@ def handle_event(event: AgentEvent) -> None:
 def handle_command(
     cmd: str,
     approval_handler: ApprovalHandler,
-    session: Session,
-    prompt_config_path: Path,
-    working_dir: str,
 ) -> str | None:
     """Handle slash commands.
 
@@ -506,55 +413,12 @@ def handle_command(
             return f"compact:{parts[1]}"
         return "compact"
 
-    if cmd.startswith("/prompt"):
-        parts = cmd.split(maxsplit=1)
-        try:
-            config = load_prompt_config(prompt_config_path)
-        except ValueError as exc:
-            console.print(f"[red]{exc}[/red]")
-            return None
-        if not config:
-            console.print(
-                f"[yellow]Prompt config not found: {prompt_config_path}[/yellow]"
-            )
-            return None
-        profiles = config.get("profiles", {})
-        if len(parts) == 1:
-            if not isinstance(profiles, dict) or not profiles:
-                console.print("[yellow]No prompt profiles found.[/yellow]")
-                return None
-            default_name = config.get("default")
-            lines = ["[bold]Prompt profiles:[/bold]"]
-            for name in sorted(profiles.keys()):
-                suffix = " (default)" if name == default_name else ""
-                lines.append(f"  {name}{suffix}")
-            console.print(Panel("\n".join(lines), title="Prompts", border_style="blue"))
-            return None
-
-        profile_name = parts[1].strip()
-        if not profile_name:
-            console.print("[yellow]Usage: /prompt <profile>[/yellow]")
-            return None
-        try:
-            session.system_prompt = build_system_prompt_from_profile(
-                profile_name, config, working_dir
-            )
-        except ValueError as exc:
-            console.print(f"[red]{exc}[/red]")
-            return None
-        console.print(f"[green]System prompt set to profile '{profile_name}'.[/green]")
-        console.print(
-            "[dim]Tip: use /compact or start a new session to align history.[/dim]"
-        )
-        return None
-
     if cmd == "/help":
         console.print(
             Panel(
                 "[bold]Commands:[/bold]\n"
                 "  /approve             - Enable auto-approve for all tool calls\n"
                 "  /compact [guidance]  - Compact conversation history\n"
-                "  /prompt [name]       - List or switch prompt profile\n"
                 "  /help                - Show this help\n"
                 "  /clear               - Clear the screen\n"
                 "  exit                 - Quit the session\n"
@@ -584,7 +448,6 @@ async def run_interactive(
     session: Session,
     model: str,
     working_dir: str,
-    prompt_config_path: Path,
     conversation_store: ConversationStore,
     session_started: datetime,
     conversation_id: str | None = None,
@@ -641,9 +504,7 @@ async def run_interactive(
             break
 
         if user_input.startswith("/"):
-            action = handle_command(
-                user_input, approval_handler, session, prompt_config_path, working_dir
-            )
+            action = handle_command(user_input, approval_handler)
             if action and action.startswith("compact"):
                 # Handle /compact command
                 instructions = ""
@@ -731,7 +592,9 @@ async def run_single_with_output(agent: Agent, prompt: str, output_path: str) ->
     # Check if output file already exists before running
     if output_file.exists():
         console.print(f"[red]Output file already exists: {output_file}[/red]")
-        console.print("[dim]Use a different path or delete the existing file first.[/dim]")
+        console.print(
+            "[dim]Use a different path or delete the existing file first.[/dim]"
+        )
         return False
 
     collected_text: list[str] = []
@@ -790,27 +653,21 @@ def main(
     ] = os.getenv("OPENAI_BASE_URL"),
     system: Annotated[
         Optional[str],
-        typer.Option("--system", "-s", help="System prompt"),
+        typer.Option("--system", "-s", help="Override system prompt entirely"),
     ] = None,
-    prompt_config: Annotated[
+    prompt_file: Annotated[
         Optional[str],
-        typer.Option("--prompt-config", help="Path to prompt config YAML"),
-    ] = None,
-    profile: Annotated[
-        Optional[str],
-        typer.Option("--profile", help="Prompt profile name from config"),
-    ] = None,
-    template: Annotated[
-        Optional[str],
-        typer.Option("--template", "-t", help="Template name for dispatch mode"),
+        typer.Option(
+            "--prompt", "-p", help="Markdown prompt file with YAML frontmatter"
+        ),
     ] = None,
     var: Annotated[
         Optional[list[str]],
-        typer.Option("--var", help="Template variable (key=value, repeatable)"),
+        typer.Option("--var", help="Prompt variable (key=value, repeatable)"),
     ] = None,
     vars_file: Annotated[
         Optional[str],
-        typer.Option("--vars-file", help="YAML file with template variables"),
+        typer.Option("--vars-file", help="YAML file with prompt variables"),
     ] = None,
     output: Annotated[
         Optional[str],
@@ -840,7 +697,9 @@ def main(
     ] = False,
     preview_lines: Annotated[
         int,
-        typer.Option("--preview-lines", help="Lines of tool output to show (0 to disable)"),
+        typer.Option(
+            "--preview-lines", help="Lines of tool output to show (0 to disable)"
+        ),
     ] = int(os.getenv("RO_AGENT_PREVIEW_LINES", "6")),
 ) -> None:
     """ro-agent: A read-only research assistant."""
@@ -866,7 +725,9 @@ def main(
                 time_str = started_dt.strftime("%Y-%m-%d %H:%M")
             except ValueError:
                 time_str = conv.id
-            console.print(f"[cyan]{conv.id}[/cyan]  {time_str}  [dim]{conv.model}[/dim]")
+            console.print(
+                f"[cyan]{conv.id}[/cyan]  {time_str}  [dim]{conv.model}[/dim]"
+            )
             console.print(f"  {conv.display_preview}")
             console.print()
         raise typer.Exit(0)
@@ -894,12 +755,6 @@ def main(
         str(Path(working_dir).expanduser().resolve()) if working_dir else os.getcwd()
     )
 
-    prompt_config_path = (
-        Path(prompt_config).expanduser().resolve()
-        if prompt_config
-        else PROMPT_CONFIG_FILE
-    )
-
     # Track when session started
     session_started = datetime.now()
 
@@ -910,15 +765,22 @@ def main(
     if resumed_conversation:
         # System prompt will be loaded from the conversation
         pass
-    elif template:
+    elif system:
+        # --system overrides everything
+        system_prompt = system
+    elif prompt_file:
+        # --prompt loads markdown file as system prompt
         try:
-            tmpl = load_template(template)
+            loaded_prompt = load_prompt(prompt_file)
+        except FileNotFoundError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
         except ValueError as exc:
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(1) from exc
 
         # Collect variables from --vars-file and --var flags
-        template_vars: dict[str, str] = {}
+        prompt_vars: dict[str, str] = {}
 
         if vars_file:
             vars_path = Path(vars_file).expanduser().resolve()
@@ -929,7 +791,7 @@ def main(
                 with open(vars_path, encoding="utf-8") as f:
                     file_vars = yaml.safe_load(f)
                 if isinstance(file_vars, dict):
-                    template_vars.update({k: str(v) for k, v in file_vars.items()})
+                    prompt_vars.update({k: str(v) for k, v in file_vars.items()})
             except Exception as exc:
                 console.print(f"[red]Failed to load vars file: {exc}[/red]")
                 raise typer.Exit(1) from exc
@@ -937,51 +799,44 @@ def main(
         # --var flags override vars file
         if var:
             try:
-                template_vars.update(parse_vars(var))
+                prompt_vars.update(parse_vars(var))
             except ValueError as exc:
                 console.print(f"[red]{exc}[/red]")
                 raise typer.Exit(1) from exc
 
-        # Prepare the template
+        # Prepare the prompt
         try:
-            system_prompt, initial_prompt = prepare_template(tmpl, template_vars)
+            system_prompt, initial_prompt = prepare_prompt(loaded_prompt, prompt_vars)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
+    elif DEFAULT_PROMPT_FILE.exists():
+        # User's custom default prompt
+        try:
+            loaded_prompt = load_prompt(DEFAULT_PROMPT_FILE)
         except ValueError as exc:
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(1) from exc
 
-    elif system:
-        system_prompt = system
+        # Provide standard environment variables
+        prompt_vars: dict[str, str] = {
+            "platform": platform.system(),
+            "home_dir": str(Path.home()),
+            "working_dir": resolved_working_dir,
+        }
+
+        try:
+            system_prompt, initial_prompt = prepare_prompt(loaded_prompt, prompt_vars)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
     else:
-        config = None
-        try:
-            config = load_prompt_config(prompt_config_path)
-        except ValueError as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(1) from exc
-
-        profile_name = profile
-        if not profile_name and config and config.get("default"):
-            profile_name = str(config.get("default"))
-
-        if profile_name:
-            if not config:
-                console.print(
-                    f"[red]Prompt profile requested but config not found: {prompt_config_path}[/red]"
-                )
-                raise typer.Exit(1)
-            try:
-                system_prompt = build_system_prompt_from_profile(
-                    profile_name, config, resolved_working_dir
-                )
-            except ValueError as exc:
-                console.print(f"[red]{exc}[/red]")
-                raise typer.Exit(1) from exc
-        else:
-            system_prompt = DEFAULT_SYSTEM_PROMPT.format(
-                platform=platform.system(),
-                home_dir=str(Path.home()),
-                working_dir=resolved_working_dir,
-            )
+        # Built-in default system prompt
+        system_prompt = DEFAULT_SYSTEM_PROMPT.format(
+            platform=platform.system(),
+            home_dir=str(Path.home()),
+            working_dir=resolved_working_dir,
+        )
 
     # Set up components - use resumed conversation if available
     if resumed_conversation:
@@ -990,7 +845,11 @@ def main(
         session.total_input_tokens = resumed_conversation.input_tokens
         session.total_output_tokens = resumed_conversation.output_tokens
         # Use the model from resumed conversation unless explicitly overridden
-        effective_model = model if model != os.getenv("OPENAI_MODEL", "gpt-5-nano") else resumed_conversation.model
+        effective_model = (
+            model
+            if model != os.getenv("OPENAI_MODEL", "gpt-5-nano")
+            else resumed_conversation.model
+        )
         # Parse the original start time
         session_started = datetime.fromisoformat(resumed_conversation.started)
         console.print(f"[green]Resuming conversation: {conversation_id}[/green]")
@@ -1014,7 +873,7 @@ def main(
     run_prompt = prompt if prompt else initial_prompt
 
     if run_prompt:
-        # Single prompt mode (from --template or positional arg)
+        # Single prompt mode (from --prompt or positional arg)
         if output:
             # Capture output to file
             asyncio.run(run_single_with_output(agent, run_prompt, output))
@@ -1028,7 +887,6 @@ def main(
                 session,
                 effective_model,
                 resolved_working_dir,
-                prompt_config_path,
                 conversation_store,
                 session_started,
                 conversation_id,
