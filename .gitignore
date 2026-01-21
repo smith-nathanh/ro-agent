@@ -19,3 +19,4 @@ wheels/
 
 .ro_agent_history
 test_data.db
+results/

@@ -1,0 +1,177 @@
+"""OS Interaction task loader and data structures."""
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from .base import BaseTask
+
+
+@dataclass
+class CheckScript:
+    """A check script configuration for evaluation."""
+
+    file: str  # Path to check script file (relative to scripts dir)
+    args: list[str] = field(default_factory=list)  # Additional arguments
+
+
+@dataclass
+class EvaluationConfig:
+    """Evaluation configuration for an OS task."""
+
+    eval_type: str  # "match" or "check"
+    match_answer: str | None = None  # For eval_type="match"
+    check_scripts: list[CheckScript] = field(default_factory=list)
+    example_script: dict[str, Any] | None = None  # For getting expected value
+
+
+@dataclass
+class OSTask(BaseTask):
+    """An OS Interaction evaluation task."""
+
+    image: str  # Docker image: "default", "packages", "ubuntu"
+    init_code: str | None = None  # Inline init script
+    init_file: str | None = None  # Path to init script file
+    start_script: str | None = None  # Background process to start
+    evaluation: EvaluationConfig = field(default_factory=lambda: EvaluationConfig("match"))
+    labels: list[str] = field(default_factory=list)  # Task categories
+
+    def get_prompt(self) -> str:
+        """Get the prompt to send to the agent."""
+        prompt = f"""{self.description}
+
+Use bash_action to execute shell commands. When you have found the answer, use answer_action to submit it."""
+        return prompt
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "index": self.index,
+            "description": self.description,
+            "image": self.image,
+            "init_code": self.init_code,
+            "init_file": self.init_file,
+            "start_script": self.start_script,
+            "eval_type": self.evaluation.eval_type,
+            "labels": self.labels,
+        }
+
+
+def load_os_tasks(
+    data_path: str | Path, scripts_dir: str | Path | None = None
+) -> list[OSTask]:
+    """Load OS Interaction tasks from a JSON file.
+
+    Args:
+        data_path: Path to the task data JSON file (e.g., dev.json)
+        scripts_dir: Optional path to scripts directory for resolving init files
+
+    Returns:
+        List of OSTask objects
+    """
+    data_path = Path(data_path)
+
+    with open(data_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    # Handle both list format and dict format
+    if isinstance(data, dict):
+        tasks_data = data.get("tasks", data.get("data", [data]))
+    else:
+        tasks_data = data
+
+    tasks = []
+    for idx, task_data in enumerate(tasks_data):
+        # Parse create config
+        create = task_data.get("create", {})
+
+        # Determine image
+        if "local" in create:
+            image = create["local"]
+        elif "docker" in create:
+            image = create["docker"]
+        else:
+            image = "default"
+
+        # Parse init config
+        init_config = create.get("init", {})
+        init_code = None
+        init_file = None
+
+        if isinstance(init_config, dict):
+            init_code = init_config.get("code")
+            init_file = init_config.get("file")
+        elif isinstance(init_config, str):
+            # Could be code or file path
+            init_code = init_config
+
+        # Parse evaluation config
+        eval_data = task_data.get("evaluation", {})
+        eval_config = parse_evaluation_config(eval_data)
+
+        task = OSTask(
+            index=idx,
+            description=task_data.get("description", ""),
+            image=image,
+            init_code=init_code,
+            init_file=init_file,
+            start_script=task_data.get("start"),
+            evaluation=eval_config,
+            labels=task_data.get("labels", []),
+        )
+        tasks.append(task)
+
+    return tasks
+
+
+def parse_evaluation_config(eval_data: dict[str, Any]) -> EvaluationConfig:
+    """Parse evaluation configuration from task data."""
+    if not eval_data:
+        return EvaluationConfig(eval_type="match")
+
+    # Check for match-based evaluation
+    if "match" in eval_data:
+        return EvaluationConfig(
+            eval_type="match",
+            match_answer=str(eval_data["match"]),
+        )
+
+    # Check for check-based evaluation
+    if "check" in eval_data:
+        check_data = eval_data["check"]
+        check_scripts = []
+
+        if isinstance(check_data, dict):
+            # Single check script
+            check_scripts.append(
+                CheckScript(
+                    file=check_data.get("file", ""),
+                    args=check_data.get("args", []),
+                )
+            )
+        elif isinstance(check_data, list):
+            # Multiple check scripts or [null, script] format
+            for item in check_data:
+                if item is None:
+                    continue
+                if isinstance(item, dict):
+                    check_scripts.append(
+                        CheckScript(
+                            file=item.get("file", ""),
+                            args=item.get("args", []),
+                        )
+                    )
+                elif isinstance(item, str):
+                    check_scripts.append(CheckScript(file=item))
+
+        # Parse example script if present
+        example = eval_data.get("example")
+
+        return EvaluationConfig(
+            eval_type="check",
+            check_scripts=check_scripts,
+            example_script=example if isinstance(example, dict) else None,
+        )
+
+    return EvaluationConfig(eval_type="match")
