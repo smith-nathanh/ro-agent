@@ -29,6 +29,7 @@ class OSEvaluator:
         answer: str | None,
         eval_config: "EvaluationConfig",
         container=None,  # Optional: EvalContainer for running scripts in container
+        scripts_dir: Path | str | None = None,  # Override scripts directory for this evaluation
     ) -> bool:
         """Evaluate an agent's answer.
 
@@ -36,6 +37,7 @@ class OSEvaluator:
             answer: The agent's submitted answer
             eval_config: Evaluation configuration from the task
             container: Optional container for running check scripts
+            scripts_dir: Override scripts directory (uses instance default if not provided)
 
         Returns:
             True if the answer is correct
@@ -43,10 +45,13 @@ class OSEvaluator:
         if answer is None:
             return False
 
+        # Use provided scripts_dir or fall back to instance default
+        effective_scripts_dir = Path(scripts_dir) if scripts_dir else self._scripts_dir
+
         if eval_config.eval_type == "match":
             return self._evaluate_match(answer, eval_config.match_answer)
         elif eval_config.eval_type == "check":
-            return await self._evaluate_check(answer, eval_config, container)
+            return await self._evaluate_check(answer, eval_config, container, effective_scripts_dir)
         else:
             return False
 
@@ -73,6 +78,7 @@ class OSEvaluator:
         answer: str,
         eval_config: "EvaluationConfig",
         container=None,
+        scripts_dir: Path | None = None,
     ) -> bool:
         """Evaluate using check scripts."""
         if not eval_config.check_scripts:
@@ -95,6 +101,7 @@ class OSEvaluator:
                 expected_value or "",
                 check_script.file,
                 container,
+                scripts_dir,
             )
 
             if not result:
@@ -109,18 +116,27 @@ class OSEvaluator:
         if not example_config:
             return None
 
-        script_file = example_config.get("file")
-        if not script_file:
-            return None
-
         try:
-            # Run the script in the container to get expected output
-            exit_code, stdout, stderr = await container.execute(
-                f"python3 {script_file}",
-                timeout=30,
-            )
-            if exit_code == 0:
-                return stdout.strip()
+            # Handle inline code (most common in AgentBench)
+            if "code" in example_config:
+                code = example_config["code"]
+                exit_code, stdout, stderr = await container.execute(
+                    code,
+                    timeout=30,
+                )
+                if exit_code == 0:
+                    return stdout.strip()
+
+            # Handle file-based scripts
+            elif "file" in example_config:
+                script_file = example_config["file"]
+                exit_code, stdout, stderr = await container.execute(
+                    f"python3 {script_file}",
+                    timeout=30,
+                )
+                if exit_code == 0:
+                    return stdout.strip()
+
         except Exception:
             pass
 
@@ -132,6 +148,7 @@ class OSEvaluator:
         expected: str,
         script_path: str,
         container=None,
+        scripts_dir: Path | None = None,
     ) -> bool:
         """Run a single check script.
 
@@ -142,8 +159,8 @@ class OSEvaluator:
         script_name = Path(script_path).name
 
         # Try to run inline if we have the check scripts locally
-        if self._scripts_dir:
-            local_script = self._scripts_dir / script_path
+        if scripts_dir:
+            local_script = scripts_dir / script_path
             if local_script.exists():
                 return await self._run_local_check(answer, expected, local_script)
 

@@ -2,6 +2,7 @@
 
 from .find_files import FindFilesHandler
 from .list_dir import ListDirHandler
+from .mysql import MysqlHandler
 from .oracle import OracleHandler
 from .postgres import PostgresHandler
 from .read_excel import ReadExcelHandler
@@ -15,6 +16,7 @@ from .write_output import WriteOutputHandler
 __all__ = [
     "FindFilesHandler",
     "ListDirHandler",
+    "MysqlHandler",
     "OracleHandler",
     "PostgresHandler",
     "ReadExcelHandler",

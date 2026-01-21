@@ -253,3 +253,39 @@ class DBBenchEvaluator:
             return abs(float(a) - float(b)) <= tolerance
         except (ValueError, TypeError):
             return False
+
+    @staticmethod
+    def compare_hash(calculated: str | None, expected: str | None) -> bool:
+        """Compare calculated hash to expected answer_md5.
+
+        The expected format from the dataset is MySQL result format:
+        "[('fa81a61f9a648475594128fa51bfa80d',)]"
+
+        Args:
+            calculated: Hash calculated from table state
+            expected: answer_md5 from dataset
+
+        Returns:
+            True if hashes match
+        """
+        if calculated is None or expected is None:
+            return False
+
+        # Extract hash from MySQL result format
+        cleaned = expected.strip()
+
+        # Handle "[('hash',)]" format
+        if cleaned.startswith("[") and cleaned.endswith(")]"):
+            try:
+                parsed = eval(cleaned)
+                if isinstance(parsed, list) and len(parsed) == 1:
+                    if isinstance(parsed[0], tuple) and len(parsed[0]) == 1:
+                        cleaned = str(parsed[0][0])
+            except Exception:
+                # Manual extraction
+                cleaned = cleaned.strip("[]() '\",")
+
+        # Also handle simpler formats
+        cleaned = cleaned.strip("[]() '\",")
+
+        return calculated.lower() == cleaned.lower()

@@ -11,11 +11,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def _default_output_dir(model: str) -> Path:
-    """Get default output directory based on model name."""
+def _default_output_dir(model: str, task_type: str) -> Path:
+    """Get default output directory based on model name and task type."""
     # Sanitize model name for use as directory (replace / with -)
     safe_model = model.replace("/", "-")
-    return Path("results") / safe_model
+    return Path("results") / f"{safe_model}-{task_type}"
 
 import typer  # noqa: E402
 from rich.console import Console  # noqa: E402
@@ -25,7 +25,7 @@ from .config import EvalConfig  # noqa: E402
 from .output import print_summary, write_results  # noqa: E402
 from .runner import EvalRunner  # noqa: E402
 from .tasks.dbbench import load_dbbench_tasks  # noqa: E402
-from .tasks.os_interaction import load_os_tasks  # noqa: E402
+from .tasks.os_interaction import load_os_tasks, load_os_benchmark  # noqa: E402
 
 console = Console()
 
@@ -95,7 +95,7 @@ def dbbench(
 
     # Set default output directory if not specified
     if output is None:
-        output_path = _default_output_dir(model)
+        output_path = _default_output_dir(model, "dbbench")
     else:
         output_path = Path(output)
 
@@ -150,13 +150,13 @@ def dbbench(
 
 @app.command()
 def os_interaction(
-    data_file: Annotated[
+    data_path: Annotated[
         str,
-        typer.Argument(help="Path to OS interaction data file (dev.json)"),
+        typer.Argument(help="Path to JSON file or os_interaction directory for full benchmark"),
     ],
     scripts: Annotated[
         Optional[str],
-        typer.Option("--scripts", "-s", help="Path to check scripts directory"),
+        typer.Option("--scripts", "-s", help="Path to check scripts directory (for single file mode)"),
     ] = None,
     model: Annotated[
         str,
@@ -195,11 +195,30 @@ def os_interaction(
         typer.Option("--verbose", "-v", help="Verbose output"),
     ] = False,
 ) -> None:
-    """Run OS Interaction evaluation tasks."""
-    # Load tasks
-    console.print(f"Loading tasks from {data_file}...")
-    tasks = load_os_tasks(data_file, scripts_dir=scripts)
-    console.print(f"Loaded {len(tasks)} tasks")
+    """Run OS Interaction evaluation tasks.
+
+    Pass a JSON file for single-file mode, or the os_interaction directory for the full benchmark.
+
+    Examples:
+        # Single file
+        ro-eval os-interaction data/dev.json --scripts scripts/dev
+
+        # Full benchmark (156 tasks)
+        ro-eval os-interaction ~/proj/AgentBench/data/os_interaction
+    """
+    # Load tasks - detect if path is a directory or file
+    input_path = Path(data_path)
+
+    if input_path.is_dir():
+        # Full benchmark mode
+        console.print(f"Loading full benchmark from {data_path}...")
+        tasks = load_os_benchmark(data_path)
+        console.print(f"Loaded {len(tasks)} tasks from benchmark")
+    else:
+        # Single file mode
+        console.print(f"Loading tasks from {data_path}...")
+        tasks = load_os_tasks(data_path, scripts_dir=scripts)
+        console.print(f"Loaded {len(tasks)} tasks")
 
     # Apply offset and limit
     if offset > 0:
@@ -211,7 +230,7 @@ def os_interaction(
 
     # Set default output directory if not specified
     if output is None:
-        output_path = _default_output_dir(model)
+        output_path = _default_output_dir(model, "os")
     else:
         output_path = Path(output)
 

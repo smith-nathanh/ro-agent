@@ -17,6 +17,10 @@ class TableInfo:
     columns: list[dict[str, str]]  # [{"name": str, "type": str}, ...]
     rows: list[list[Any]]
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for hash calculation."""
+        return {"columns": self.columns, "rows": self.rows}
+
 
 @dataclass
 class DBBenchTask(BaseTask):
@@ -29,6 +33,7 @@ class DBBenchTask(BaseTask):
     ground_truth_sql: str | None = None
     add_description: str = ""  # Additional table description
     source: str = ""  # wikisql, wikitq, etc.
+    answer_md5: str | None = None  # Pre-computed hash for mutation queries
 
     def get_prompt(self) -> str:
         """Get the prompt to send to the agent.
@@ -140,6 +145,7 @@ def load_dbbench_tasks(path: str | Path) -> list[DBBenchTask]:
                 ground_truth_sql=sql_query,
                 add_description=data.get("add_description", ""),
                 source=data.get("source", ""),
+                answer_md5=data.get("answer_md5"),
             )
             tasks.append(task)
 

@@ -6,12 +6,15 @@ This module runs [AgentBench](https://github.com/THUDM/AgentBench) tasks through
 
 ```bash
 # Run DBBench (database tasks)
-ro-eval dbbench ~/proj/AgentBench/data/dbbench/standard.jsonl --model gpt-4o
+ro-eval dbbench ~/proj/AgentBench/data/dbbench/standard.jsonl --model gpt-5-mini
 
-# Run OS Interaction (Linux tasks) - requires Docker
+# Run OS Interaction - full benchmark (156 tasks)
+ro-eval os-interaction ~/proj/AgentBench/data/os_interaction --model gpt-5-mini
+
+# Run OS Interaction - single file (26 tasks)
 ro-eval os-interaction ~/proj/AgentBench/data/os_interaction/data/dev.json \
   --scripts ~/proj/AgentBench/data/os_interaction/scripts/dev \
-  --model gpt-4o
+  --model gpt-5-mini
 ```
 
 ## Commands
@@ -27,7 +30,7 @@ Arguments:
   DATA_FILE              Path to standard.jsonl from AgentBench
 
 Options:
-  -m, --model TEXT       Model to use (default: gpt-4o)
+  -m, --model TEXT       Model to use (default: gpt-5-mini)
   --base-url TEXT        API base URL for OpenAI-compatible endpoints
   --max-turns INTEGER    Max turns per task (default: 20)
   -p, --parallel INTEGER Run N tasks in parallel (default: 1)
@@ -49,7 +52,7 @@ Arguments:
 
 Options:
   -s, --scripts TEXT     Path to check scripts directory
-  -m, --model TEXT       Model to use (default: gpt-4o)
+  -m, --model TEXT       Model to use (default: gpt-5-mini)
   --base-url TEXT        API base URL for OpenAI-compatible endpoints
   --max-turns INTEGER    Max turns per task (default: 8)
   -p, --parallel INTEGER Run N tasks in parallel (default: 1)
@@ -58,9 +61,44 @@ Options:
   --offset INTEGER       Skip first N tasks
 ```
 
-**Prerequisites for OS tasks:**
-- Docker must be installed and running
-- AgentBench Docker images must be built (`local-os/default`, `local-os/packages`, `local-os/ubuntu`)
+## Setup
+
+### DBBench Setup
+
+No setup required. DBBench creates temporary SQLite databases automatically.
+
+### OS Interaction Setup
+
+OS Interaction tasks run commands inside Docker containers. You need to build the AgentBench Docker images first.
+
+**1. Make sure Docker is installed and running**
+
+**2. Build the Docker images** (from the AgentBench repo):
+
+```bash
+cd ~/proj/AgentBench
+
+docker build -t local-os/default -f ./data/os_interaction/res/dockerfiles/default data/os_interaction/res/dockerfiles
+docker build -t local-os/packages -f ./data/os_interaction/res/dockerfiles/packages data/os_interaction/res/dockerfiles
+docker build -t local-os/ubuntu -f ./data/os_interaction/res/dockerfiles/ubuntu data/os_interaction/res/dockerfiles
+```
+
+These are simple Ubuntu containers with common tools (python3, git, vim, curl, wget, etc.).
+
+**3. Verify the images exist:**
+
+```bash
+docker images | grep local-os
+```
+
+You should see:
+```
+local-os/default    latest    ...
+local-os/packages   latest    ...
+local-os/ubuntu     latest    ...
+```
+
+**Note:** If `docker.1ms.run/ubuntu` doesn't work (it's a mirror), edit the Dockerfiles to use `ubuntu:latest` instead.
 
 ## How It Works
 
@@ -109,7 +147,12 @@ Custom prompts can be provided via `--system-prompt path/to/prompt.md`.
 
 ## Output Format
 
-Results are written in AgentBench-compatible format:
+Results are saved to `results/<model>/` by default (e.g., `results/gpt-5-mini/`).
+
+Three files are created:
+- `runs.jsonl` - Per-task results
+- `overall.json` - Aggregate metrics
+- `summary.txt` - Human-readable summary
 
 ### `runs.jsonl`
 
@@ -164,6 +207,34 @@ Aggregate metrics:
     }
   }
 }
+```
+
+### `summary.txt`
+
+Human-readable summary:
+
+```
+==================================================
+Evaluation Results
+==================================================
+Total tasks:     300
+Passed:          255
+Failed:          45
+Accuracy:        85.00%
+
+Status Breakdown:
+  Completed:           285
+  Context limit:       5
+  Validation failed:   3
+  Invalid action:      2
+  Turn limit reached:  3
+  Task error:          2
+
+History Length:
+  Average: 4.5
+  Min:     2
+  Max:     20
+==================================================
 ```
 
 ## Examples

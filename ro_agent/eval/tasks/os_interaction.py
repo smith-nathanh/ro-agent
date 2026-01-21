@@ -36,6 +36,8 @@ class OSTask(BaseTask):
     start_script: str | None = None  # Background process to start
     evaluation: EvaluationConfig = field(default_factory=lambda: EvaluationConfig("match"))
     labels: list[str] = field(default_factory=list)  # Task categories
+    scripts_dir: str | None = None  # Path to scripts directory for this task
+    source_file: str | None = None  # Source JSON file (for debugging/reruns)
 
     def get_prompt(self) -> str:
         """Get the prompt to send to the agent."""
@@ -59,18 +61,22 @@ Use bash_action to execute shell commands. When you have found the answer, use a
 
 
 def load_os_tasks(
-    data_path: str | Path, scripts_dir: str | Path | None = None
+    data_path: str | Path,
+    scripts_dir: str | Path | None = None,
+    start_index: int = 0,
 ) -> list[OSTask]:
     """Load OS Interaction tasks from a JSON file.
 
     Args:
         data_path: Path to the task data JSON file (e.g., dev.json)
         scripts_dir: Optional path to scripts directory for resolving init files
+        start_index: Starting index for task numbering (for combining multiple files)
 
     Returns:
         List of OSTask objects
     """
     data_path = Path(data_path)
+    scripts_dir_str = str(scripts_dir) if scripts_dir else None
 
     with open(data_path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -85,6 +91,10 @@ def load_os_tasks(
     for idx, task_data in enumerate(tasks_data):
         # Parse create config
         create = task_data.get("create", {})
+
+        # Handle malformed create fields (list or null)
+        if not isinstance(create, dict):
+            create = {}
 
         # Determine image
         if "local" in create:
@@ -111,7 +121,7 @@ def load_os_tasks(
         eval_config = parse_evaluation_config(eval_data)
 
         task = OSTask(
-            index=idx,
+            index=start_index + idx,
             description=task_data.get("description", ""),
             image=image,
             init_code=init_code,
@@ -119,10 +129,65 @@ def load_os_tasks(
             start_script=task_data.get("start"),
             evaluation=eval_config,
             labels=task_data.get("labels", []),
+            scripts_dir=scripts_dir_str,
+            source_file=str(data_path),
         )
         tasks.append(task)
 
     return tasks
+
+
+def load_os_benchmark(base_path: str | Path) -> list[OSTask]:
+    """Load the full OS Interaction benchmark from the AgentBench directory structure.
+
+    Expects the standard AgentBench layout:
+        base_path/
+            data/
+                1/*.json
+                2/*.json
+                ...
+                7/*.json
+            scripts/
+                1/
+                2/
+                ...
+                7/
+
+    Args:
+        base_path: Path to the os_interaction directory
+
+    Returns:
+        List of OSTask objects from all task files
+    """
+    base_path = Path(base_path)
+    data_dir = base_path / "data"
+    scripts_base = base_path / "scripts"
+
+    if not data_dir.exists():
+        raise FileNotFoundError(f"Data directory not found: {data_dir}")
+
+    all_tasks: list[OSTask] = []
+    task_index = 0
+
+    # Load from numbered directories (1-7)
+    for subdir_num in range(1, 8):
+        subdir = data_dir / str(subdir_num)
+        if not subdir.exists():
+            continue
+
+        scripts_dir = scripts_base / str(subdir_num)
+
+        # Load all JSON files in this subdirectory
+        for json_file in sorted(subdir.glob("*.json")):
+            tasks = load_os_tasks(
+                json_file,
+                scripts_dir=scripts_dir if scripts_dir.exists() else None,
+                start_index=task_index,
+            )
+            all_tasks.extend(tasks)
+            task_index += len(tasks)
+
+    return all_tasks
 
 
 def parse_evaluation_config(eval_data: dict[str, Any]) -> EvaluationConfig:
