@@ -67,10 +67,13 @@ class ModelClient:
         self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
         self._model = model
         self._service_tier = service_tier
+        self._base_url = base_url or ""
 
-    async def stream(self, prompt: Prompt) -> AsyncIterator[StreamEvent]:
-        """Stream a response from the model."""
-        # Build messages
+        # Cerebras doesn't support streaming with tool calling
+        self._use_nonstreaming_tools = "cerebras" in self._base_url.lower()
+
+    def _build_messages(self, prompt: Prompt) -> list[dict[str, Any]]:
+        """Build messages list from prompt."""
         messages: list[dict[str, Any]] = [{"role": "system", "content": prompt.system}]
         for msg in prompt.messages:
             m: dict[str, Any] = {"role": msg.role}
@@ -81,6 +84,17 @@ class ModelClient:
             if msg.tool_call_id:
                 m["tool_call_id"] = msg.tool_call_id
             messages.append(m)
+        return messages
+
+    async def stream(self, prompt: Prompt) -> AsyncIterator[StreamEvent]:
+        """Stream a response from the model."""
+        # Use non-streaming for tool calls on providers that don't support it
+        if prompt.tools and self._use_nonstreaming_tools:
+            async for event in self._stream_via_complete(prompt):
+                yield event
+            return
+
+        messages = self._build_messages(prompt)
 
         kwargs: dict[str, Any] = {
             "model": self._model,
@@ -163,6 +177,60 @@ class ModelClient:
                                 ),
                             )
                         tool_calls_in_progress.clear()
+
+        except Exception as e:
+            yield StreamEvent(type="error", content=str(e))
+
+    async def _stream_via_complete(self, prompt: Prompt) -> AsyncIterator[StreamEvent]:
+        """Non-streaming tool calling that yields StreamEvents.
+
+        Used for providers like Cerebras that don't support streaming with tools.
+        """
+        messages = self._build_messages(prompt)
+
+        kwargs: dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
+            "stream": False,
+        }
+
+        if prompt.tools:
+            kwargs["tools"] = prompt.tools
+
+        if self._service_tier:
+            kwargs["service_tier"] = self._service_tier
+
+        try:
+            response = await self._client.chat.completions.create(**kwargs)
+            choice = response.choices[0]
+            msg = choice.message
+
+            # Emit text content if present
+            if msg.content:
+                yield StreamEvent(type="text", content=msg.content)
+
+            # Emit tool calls if present
+            if msg.tool_calls:
+                for tc in msg.tool_calls:
+                    try:
+                        args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                    except json.JSONDecodeError:
+                        args = {}
+                    yield StreamEvent(
+                        type="tool_call",
+                        tool_call=ToolCall(
+                            id=tc.id,
+                            name=tc.function.name,
+                            arguments=args,
+                        ),
+                    )
+
+            # Emit done with usage
+            usage = {
+                "input_tokens": response.usage.prompt_tokens if response.usage else 0,
+                "output_tokens": response.usage.completion_tokens if response.usage else 0,
+            }
+            yield StreamEvent(type="done", usage=usage)
 
         except Exception as e:
             yield StreamEvent(type="error", content=str(e))

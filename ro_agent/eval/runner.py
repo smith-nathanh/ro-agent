@@ -42,6 +42,7 @@ from ro_agent.core.agent import Agent
 from ro_agent.core.session import Session
 from ro_agent.tools.registry import ToolRegistry
 
+from .cerebras_client import CerebrasClient
 from .config import (
     DBBenchResult,
     EvalAbortedError,
@@ -71,6 +72,8 @@ Tools:
 - `execute_sql`: Run a SQL query (one statement at a time)
 - `commit_final_answer`: Submit your final answer
 
+IMPORTANT: Never call `commit_final_answer` in the same turn as `execute_sql`. You must see the query results before committing your answer. You may call `execute_sql` multiple times to explore the data, but only call `commit_final_answer` alone after you have the answer.
+
 Answer format:
 - Return the value exactly as it appears in the query result
 - Submit only the specific value(s) requested, not entire rows
@@ -87,9 +90,12 @@ Tools:
 - `answer_action`: Submit your answer
 - `finish_action`: Signal task completion (when no answer is needed)
 
+IMPORTANT: Never call `answer_action` in the same turn as `bash_action`. You must see the command output before submitting your answer. Run commands first, observe the results, then call `answer_action` alone in a separate turn.
+
 Answer format:
 - Be exact and precise: a number, filename, or single value
 - Do not answer with full sentences
+- Your answer must be an actual value, not a variable name or placeholder like "$output"
 - Output may be truncated; adjust your approach if needed
 """
 
@@ -126,6 +132,26 @@ class EvalRunner:
         return (
             task.query_type in ("INSERT", "UPDATE", "DELETE")
             and task.answer_md5 is not None
+        )
+
+    def _is_cerebras(self) -> bool:
+        """Check if we're using Cerebras based on base_url."""
+        return self.config.base_url and "cerebras" in self.config.base_url.lower()
+
+    def _create_client(self) -> ModelClient | CerebrasClient:
+        """Create the appropriate client based on config.
+
+        Uses native Cerebras SDK when base_url contains 'cerebras',
+        otherwise uses the standard OpenAI-compatible ModelClient.
+        """
+        if self._is_cerebras():
+            print(f"[DEBUG] Using CerebrasClient for model={self.config.model}", file=sys.stderr)
+            return CerebrasClient(model=self.config.model)
+        print(f"[DEBUG] Using ModelClient for model={self.config.model} base_url={self.config.base_url}", file=sys.stderr)
+        return ModelClient(
+            model=self.config.model,
+            base_url=self.config.base_url,
+            service_tier=self.config.service_tier,
         )
 
     async def cleanup(self) -> None:
@@ -182,7 +208,7 @@ class EvalRunner:
             # Create session and agent
             system_prompt = self._get_system_prompt("dbbench")
             session = Session(system_prompt=system_prompt)
-            client = ModelClient(model=self.config.model, base_url=self.config.base_url, service_tier=self.config.service_tier)
+            client = self._create_client()
             agent = Agent(
                 session=session,
                 registry=registry,
@@ -212,11 +238,19 @@ class EvalRunner:
                             async for event in agent.run_turn(prompt):
                                 if event.type == "error":
                                     print(f"[Task {task.index}] API Error: {event.content}", file=sys.stderr)
+                                # Stop agent loop immediately when answer is submitted
+                                if event.type == "tool_end" and submit_handler.is_submitted:
+                                    agent.request_cancel()
+                                    break
                         else:
                             # Subsequent turns - prompt agent to continue
                             async for event in agent.run_turn("Continue working on the task."):
                                 if event.type == "error":
                                     print(f"[Task {task.index}] API Error: {event.content}", file=sys.stderr)
+                                # Stop agent loop immediately when answer is submitted
+                                if event.type == "tool_end" and submit_handler.is_submitted:
+                                    agent.request_cancel()
+                                    break
 
                     # Reset timeout counter on successful turn
                     consecutive_timeouts = 0
@@ -329,7 +363,7 @@ class EvalRunner:
             # Create session and agent
             system_prompt = self._get_system_prompt("dbbench")
             session = Session(system_prompt=system_prompt)
-            client = ModelClient(model=self.config.model, base_url=self.config.base_url, service_tier=self.config.service_tier)
+            client = self._create_client()
             agent = Agent(
                 session=session,
                 registry=registry,
@@ -356,10 +390,18 @@ class EvalRunner:
                             async for event in agent.run_turn(prompt):
                                 if event.type == "error":
                                     print(f"[Task {task.index}] API Error: {event.content}", file=sys.stderr)
+                                # Stop agent loop immediately when answer is submitted
+                                if event.type == "tool_end" and submit_handler.is_submitted:
+                                    agent.request_cancel()
+                                    break
                         else:
                             async for event in agent.run_turn("Continue working on the task."):
                                 if event.type == "error":
                                     print(f"[Task {task.index}] API Error: {event.content}", file=sys.stderr)
+                                # Stop agent loop immediately when answer is submitted
+                                if event.type == "tool_end" and submit_handler.is_submitted:
+                                    agent.request_cancel()
+                                    break
 
                     consecutive_timeouts = 0
 
@@ -534,7 +576,7 @@ class EvalRunner:
             # Create session and agent
             system_prompt = self._get_system_prompt("os")
             session = Session(system_prompt=system_prompt)
-            client = ModelClient(model=self.config.model, base_url=self.config.base_url, service_tier=self.config.service_tier)
+            client = self._create_client()
             agent = Agent(
                 session=session,
                 registry=registry,
@@ -563,10 +605,18 @@ class EvalRunner:
                             async for event in agent.run_turn(prompt):
                                 if event.type == "error":
                                     print(f"[Task {task.index}] API Error: {event.content}", file=sys.stderr)
+                                # Stop agent loop immediately when task is done
+                                if event.type == "tool_end" and (answer_handler.is_submitted or finish_handler.is_finished):
+                                    agent.request_cancel()
+                                    break
                         else:
                             async for event in agent.run_turn("Continue working on the task."):
                                 if event.type == "error":
                                     print(f"[Task {task.index}] API Error: {event.content}", file=sys.stderr)
+                                # Stop agent loop immediately when task is done
+                                if event.type == "tool_end" and (answer_handler.is_submitted or finish_handler.is_finished):
+                                    agent.request_cancel()
+                                    break
 
                     consecutive_timeouts = 0
 
