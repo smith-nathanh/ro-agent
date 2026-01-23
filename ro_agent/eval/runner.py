@@ -32,6 +32,7 @@ Always use a tool provided instead of simply responding with content.
 """
 
 import asyncio
+import sys
 import uuid
 from pathlib import Path
 from typing import Any
@@ -181,7 +182,7 @@ class EvalRunner:
             # Create session and agent
             system_prompt = self._get_system_prompt("dbbench")
             session = Session(system_prompt=system_prompt)
-            client = ModelClient(model=self.config.model, base_url=self.config.base_url)
+            client = ModelClient(model=self.config.model, base_url=self.config.base_url, service_tier=self.config.service_tier)
             agent = Agent(
                 session=session,
                 registry=registry,
@@ -193,6 +194,8 @@ class EvalRunner:
             prompt = task.get_prompt()
             status = TaskStatus.COMPLETED
             turns = 0
+            consecutive_timeouts = 0
+            turn_timeout = 600 if self.config.service_tier == "flex" else 120  # longer for flex
 
             for turn in range(self.config.max_turns):
                 turns += 1
@@ -201,21 +204,35 @@ class EvalRunner:
                 if submit_handler.is_submitted:
                     break
 
-                # Run a turn
+                # Run a turn with timeout
                 try:
-                    if turn == 0:
-                        # First turn with the task prompt
-                        async for event in agent.run_turn(prompt):
-                            pass  # Process events silently
-                    else:
-                        # Subsequent turns - prompt agent to continue
-                        async for event in agent.run_turn("Continue working on the task."):
-                            pass
+                    async with asyncio.timeout(turn_timeout):
+                        if turn == 0:
+                            # First turn with the task prompt
+                            async for event in agent.run_turn(prompt):
+                                if event.type == "error":
+                                    print(f"[Task {task.index}] API Error: {event.content}", file=sys.stderr)
+                        else:
+                            # Subsequent turns - prompt agent to continue
+                            async for event in agent.run_turn("Continue working on the task."):
+                                if event.type == "error":
+                                    print(f"[Task {task.index}] API Error: {event.content}", file=sys.stderr)
+
+                    # Reset timeout counter on successful turn
+                    consecutive_timeouts = 0
 
                     # Check for answer after turn
                     if submit_handler.is_submitted:
                         break
 
+                except TimeoutError:
+                    consecutive_timeouts += 1
+                    print(f"[Task {task.index}] Turn {turn} timed out ({consecutive_timeouts}/3)", file=sys.stderr)
+                    if consecutive_timeouts >= 3:
+                        raise EvalAbortedError(
+                            f"Aborting: 3 consecutive turn timeouts. API may be unresponsive.",
+                            consecutive_timeouts,
+                        )
                 except Exception as e:
                     if "context" in str(e).lower():
                         status = TaskStatus.AGENT_CONTEXT_LIMIT
@@ -253,6 +270,8 @@ class EvalRunner:
 
             return result
 
+        except EvalAbortedError:
+            raise
         except Exception as e:
             return TaskResult(
                 index=task.index,
@@ -310,7 +329,7 @@ class EvalRunner:
             # Create session and agent
             system_prompt = self._get_system_prompt("dbbench")
             session = Session(system_prompt=system_prompt)
-            client = ModelClient(model=self.config.model, base_url=self.config.base_url)
+            client = ModelClient(model=self.config.model, base_url=self.config.base_url, service_tier=self.config.service_tier)
             agent = Agent(
                 session=session,
                 registry=registry,
@@ -322,6 +341,8 @@ class EvalRunner:
             prompt = task.get_prompt()
             status = TaskStatus.COMPLETED
             turns = 0
+            consecutive_timeouts = 0
+            turn_timeout = 600 if self.config.service_tier == "flex" else 120  # longer for flex
 
             for turn in range(self.config.max_turns):
                 turns += 1
@@ -330,16 +351,29 @@ class EvalRunner:
                     break
 
                 try:
-                    if turn == 0:
-                        async for event in agent.run_turn(prompt):
-                            pass
-                    else:
-                        async for event in agent.run_turn("Continue working on the task."):
-                            pass
+                    async with asyncio.timeout(turn_timeout):
+                        if turn == 0:
+                            async for event in agent.run_turn(prompt):
+                                if event.type == "error":
+                                    print(f"[Task {task.index}] API Error: {event.content}", file=sys.stderr)
+                        else:
+                            async for event in agent.run_turn("Continue working on the task."):
+                                if event.type == "error":
+                                    print(f"[Task {task.index}] API Error: {event.content}", file=sys.stderr)
+
+                    consecutive_timeouts = 0
 
                     if submit_handler.is_submitted:
                         break
 
+                except TimeoutError:
+                    consecutive_timeouts += 1
+                    print(f"[Task {task.index}] Turn {turn} timed out ({consecutive_timeouts}/3)", file=sys.stderr)
+                    if consecutive_timeouts >= 3:
+                        raise EvalAbortedError(
+                            f"Aborting: 3 consecutive turn timeouts. API may be unresponsive.",
+                            consecutive_timeouts,
+                        )
                 except Exception as e:
                     if "context" in str(e).lower():
                         status = TaskStatus.AGENT_CONTEXT_LIMIT
@@ -373,6 +407,8 @@ class EvalRunner:
 
             return result
 
+        except EvalAbortedError:
+            raise
         except Exception as e:
             return TaskResult(
                 index=task.index,
@@ -498,7 +534,7 @@ class EvalRunner:
             # Create session and agent
             system_prompt = self._get_system_prompt("os")
             session = Session(system_prompt=system_prompt)
-            client = ModelClient(model=self.config.model, base_url=self.config.base_url)
+            client = ModelClient(model=self.config.model, base_url=self.config.base_url, service_tier=self.config.service_tier)
             agent = Agent(
                 session=session,
                 registry=registry,
@@ -510,6 +546,8 @@ class EvalRunner:
             prompt = task.get_prompt()
             status = TaskStatus.COMPLETED
             turns = 0
+            consecutive_timeouts = 0
+            turn_timeout = 600 if self.config.service_tier == "flex" else 120  # longer for flex
 
             for turn in range(self.config.max_turns):
                 turns += 1
@@ -518,18 +556,31 @@ class EvalRunner:
                 if answer_handler.is_submitted or finish_handler.is_finished:
                     break
 
-                # Run a turn
+                # Run a turn with timeout
                 try:
-                    if turn == 0:
-                        async for event in agent.run_turn(prompt):
-                            pass
-                    else:
-                        async for event in agent.run_turn("Continue working on the task."):
-                            pass
+                    async with asyncio.timeout(turn_timeout):
+                        if turn == 0:
+                            async for event in agent.run_turn(prompt):
+                                if event.type == "error":
+                                    print(f"[Task {task.index}] API Error: {event.content}", file=sys.stderr)
+                        else:
+                            async for event in agent.run_turn("Continue working on the task."):
+                                if event.type == "error":
+                                    print(f"[Task {task.index}] API Error: {event.content}", file=sys.stderr)
+
+                    consecutive_timeouts = 0
 
                     if answer_handler.is_submitted or finish_handler.is_finished:
                         break
 
+                except TimeoutError:
+                    consecutive_timeouts += 1
+                    print(f"[Task {task.index}] Turn {turn} timed out ({consecutive_timeouts}/3)", file=sys.stderr)
+                    if consecutive_timeouts >= 3:
+                        raise EvalAbortedError(
+                            f"Aborting: 3 consecutive turn timeouts. API may be unresponsive.",
+                            consecutive_timeouts,
+                        )
                 except Exception as e:
                     if "context" in str(e).lower():
                         status = TaskStatus.AGENT_CONTEXT_LIMIT
@@ -561,6 +612,8 @@ class EvalRunner:
 
             return result
 
+        except EvalAbortedError:
+            raise
         except Exception as e:
             return TaskResult(
                 index=task.index,

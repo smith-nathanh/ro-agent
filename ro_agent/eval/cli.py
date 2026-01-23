@@ -26,7 +26,9 @@ from .output import (  # noqa: E402
     create_run_dir,
     get_completed_indices,
     print_summary,
+    rebuild_metrics_from_runs,
     save_run_config,
+    update_overall,
 )
 from .runner import EvalRunner  # noqa: E402
 from .tasks.dbbench import load_dbbench_tasks  # noqa: E402
@@ -91,6 +93,10 @@ def dbbench(
         bool,
         typer.Option("--verbose", "-v", help="Verbose output"),
     ] = False,
+    service_tier: Annotated[
+        Optional[str],
+        typer.Option("--service-tier", help="OpenAI service tier: 'flex' for 50% cost savings (slower)"),
+    ] = None,
 ) -> None:
     """Run DBBench evaluation tasks."""
     # Load tasks
@@ -142,6 +148,7 @@ def dbbench(
         output_dir=str(run_dir),
         system_prompt_file=system_prompt,
         verbose=verbose,
+        service_tier=service_tier,
     )
 
     # Save run config (only for new runs)
@@ -156,6 +163,7 @@ def dbbench(
             "select_only": select_only,
             "offset": offset,
             "limit": limit,
+            "service_tier": service_tier,
         }, run_dir)
 
     # Create runner
@@ -185,6 +193,11 @@ def dbbench(
             console.print(f"[red bold]Evaluation aborted:[/red bold] {e}")
             console.print(f"\nPartial results saved to: {run_dir}")
             raise typer.Exit(1)
+
+    # When resuming, rebuild metrics from all results (not just this session)
+    if resume:
+        metrics = rebuild_metrics_from_runs(run_dir)
+        update_overall(metrics, run_dir)
 
     # Print summary
     console.print()
@@ -242,6 +255,10 @@ def os_interaction(
         bool,
         typer.Option("--verbose", "-v", help="Verbose output"),
     ] = False,
+    service_tier: Annotated[
+        Optional[str],
+        typer.Option("--service-tier", help="OpenAI service tier: 'flex' for 50% cost savings (slower)"),
+    ] = None,
 ) -> None:
     """Run OS Interaction evaluation tasks.
 
@@ -309,6 +326,7 @@ def os_interaction(
         output_dir=str(run_dir),
         system_prompt_file=system_prompt,
         verbose=verbose,
+        service_tier=service_tier,
     )
 
     # Save run config (only for new runs)
@@ -323,6 +341,7 @@ def os_interaction(
             "system_prompt": system_prompt,
             "offset": offset,
             "limit": limit,
+            "service_tier": service_tier,
         }, run_dir)
 
     # Create runner
@@ -352,6 +371,11 @@ def os_interaction(
             console.print(f"[red bold]Evaluation aborted:[/red bold] {e}")
             console.print(f"\nPartial results saved to: {run_dir}")
             raise typer.Exit(1)
+
+    # When resuming, rebuild metrics from all results (not just this session)
+    if resume:
+        metrics = rebuild_metrics_from_runs(run_dir)
+        update_overall(metrics, run_dir)
 
     # Print summary
     console.print()

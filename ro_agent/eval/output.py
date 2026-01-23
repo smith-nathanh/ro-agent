@@ -220,3 +220,53 @@ def load_overall(overall_path: Path | str) -> dict[str, Any]:
     """
     with open(overall_path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def rebuild_metrics_from_runs(output_dir: Path | str) -> EvalMetrics:
+    """Rebuild metrics from all results in runs.jsonl.
+
+    Use this after resuming a run to get accurate totals.
+
+    Args:
+        output_dir: Run directory containing runs.jsonl
+
+    Returns:
+        EvalMetrics computed from all results
+    """
+    runs_path = Path(output_dir) / "runs.jsonl"
+    results = load_results(runs_path)
+
+    metrics = EvalMetrics()
+    for r in results:
+        metrics.total += 1
+
+        # Count pass/fail from result
+        result_data = r.get("result", {})
+        is_correct = result_data.get("result", result_data.get("is_correct", False))
+        if is_correct:
+            metrics.passed += 1
+        else:
+            metrics.failed += 1
+
+        # Count status
+        status = r.get("status", "unknown")
+        if status == "completed":
+            metrics.completed += 1
+        elif status == "agent context limit":
+            metrics.context_limit += 1
+        elif status == "agent validation failed":
+            metrics.validation_failed += 1
+        elif status == "agent invalid action":
+            metrics.invalid_action += 1
+        elif status == "task limit reached":
+            metrics.task_limit_reached += 1
+        elif status == "task error":
+            metrics.task_error += 1
+        else:
+            metrics.unknown += 1
+
+        # Track history length
+        history = r.get("history", [])
+        metrics.history_lengths.append(len(history))
+
+    return metrics

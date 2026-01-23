@@ -38,6 +38,7 @@ class EvalConfig:
     system_prompt_file: str | None = None
     verbose: bool = False
     max_consecutive_errors: int = 5  # Abort after this many consecutive task errors
+    service_tier: str | None = None  # OpenAI service tier: "flex", "auto", or None
 
 
 @dataclass

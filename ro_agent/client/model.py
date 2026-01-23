@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, APITimeoutError, APIConnectionError
 
 
 @dataclass
@@ -58,9 +58,15 @@ class ModelClient:
         model: str = "gpt-5-nano",
         base_url: str | None = None,
         api_key: str | None = None,
+        timeout: float | None = None,
+        service_tier: str | None = None,
     ) -> None:
-        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        # For flex processing, use longer timeout (15 min) per OpenAI docs
+        if timeout is None:
+            timeout = 900.0 if service_tier == "flex" else 60.0
+        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
         self._model = model
+        self._service_tier = service_tier
 
     async def stream(self, prompt: Prompt) -> AsyncIterator[StreamEvent]:
         """Stream a response from the model."""
@@ -85,6 +91,9 @@ class ModelClient:
 
         if prompt.tools:
             kwargs["tools"] = prompt.tools
+
+        if self._service_tier:
+            kwargs["service_tier"] = self._service_tier
 
         try:
             # Track tool calls being built
@@ -166,11 +175,15 @@ class ModelClient:
         Returns (content, usage_dict).
         """
         try:
-            response = await self._client.chat.completions.create(
-                model=self._model,
-                messages=messages,
-                stream=False,
-            )
+            kwargs: dict[str, Any] = {
+                "model": self._model,
+                "messages": messages,
+                "stream": False,
+            }
+            if self._service_tier:
+                kwargs["service_tier"] = self._service_tier
+
+            response = await self._client.chat.completions.create(**kwargs)
             content = response.choices[0].message.content or ""
             usage = {
                 "input_tokens": response.usage.prompt_tokens if response.usage else 0,
