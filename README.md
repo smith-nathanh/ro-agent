@@ -1,11 +1,47 @@
 # ro-agent
 
-A read-only agent for inspecting logs, files, and databases—without modifying anything.
+A Python-based agent harness with configurable capability profiles.
+
+**Use cases:**
+- **Research & inspection**: Investigate failed job logs, probe database schemas, search codebases
+- **Development**: Edit files, run builds, execute tests—with fine-grained controls over shell commands and SQL restrictions
+- **Benchmarking**: Run LLM evaluations (AgentBench, TerminalBench) in sandboxed containers
+
+The `readonly` profile enforces system-level restrictions for safe inspection of production systems. The `developer` profile unlocks file editing and unrestricted shell access with configurable guardrails. The `eval` profile provides unrestricted access for testing the full capabilities of the harness in isolated environments.
+
+## Features
+
+- **Capability profiles**: Three built-in profiles (readonly, developer, eval) plus custom YAML profiles
+- **Fine-grained controls**: Shell command allowlisting, per-tool approval requirements, SQL mutation restrictions
+- **File editing**: Write and edit tools available in developer/eval profiles
+- **Multiple database backends**: SQLite, PostgreSQL, MySQL, Oracle, Vertica—with configurable read-only or mutation access
+- **Prompt templates**: Markdown files with variable substitution for repeatable investigations
+- **Evaluation integrations**: AgentBench (DBBench, OS Interaction) and Harbor/TerminalBench
 
 ## Installation
 
 ```bash
 uv sync
+```
+
+## Capability Profiles
+
+The agent's capabilities are controlled via profiles:
+
+| Profile | Shell | File Write | Database | Use Case |
+|---------|-------|------------|----------|----------|
+| `readonly` | Restricted (allowlist) | Off | SELECT only | Safe research on production systems |
+| `developer` | Unrestricted | Full | SELECT only | Local development with file editing |
+| `eval` | Unrestricted | Full | Full | Sandboxed benchmark execution |
+
+```bash
+# Use a specific profile
+uv run ro-agent --profile readonly
+uv run ro-agent --profile developer
+uv run ro-agent --profile eval
+
+# Custom YAML profile
+uv run ro-agent --profile ~/.config/ro-agent/profiles/my-profile.yaml
 ```
 
 ## Usage Modes
@@ -78,17 +114,23 @@ Log location: {{ log_path }}
 
 ## Tools
 
-The agent has read-only tools for research:
+### Core Tools (always available)
 
 | Tool | Purpose |
 |------|---------|
-| `search` | Regex search with ripgrep (fast, streams results) |
-| `read_file` | Read file contents with optional line ranges |
-| `list_dir` | Explore directories (flat or recursive tree) |
-| `find_files` | Find files by glob pattern |
-| `shell` | Run shell commands (allowlisted, requires approval) |
+| `grep` | Regex search with ripgrep |
+| `read` | Read file contents with optional line ranges |
+| `list` | Explore directories (flat or recursive tree) |
+| `glob` | Find files by glob pattern |
 | `read_excel` | Read Excel files (list sheets, read data, get info) |
-| `write_output` | Export findings to a new file |
+
+### Capability-Dependent Tools
+
+| Tool | Availability | Purpose |
+|------|-------------|---------|
+| `bash` | Always (restricted or unrestricted based on profile) | Run shell commands |
+| `write` | `developer`, `eval` profiles | Create new files (or overwrite in FULL mode) |
+| `edit` | `developer`, `eval` profiles (FULL mode) | Surgical file edits via search-and-replace |
 
 ### Database Tools
 
@@ -96,11 +138,13 @@ Available when configured via environment variables:
 
 | Tool | Enable With |
 |------|-------------|
-| `oracle` | `ORACLE_DSN`, `ORACLE_USER`, `ORACLE_PASSWORD` |
 | `sqlite` | `SQLITE_DB` |
-| `vertica` | `VERTICA_HOST`, `VERTICA_PORT`, `VERTICA_DATABASE`, `VERTICA_USER`, `VERTICA_PASSWORD` |
+| `postgres` | `POSTGRES_HOST`, `POSTGRES_DATABASE`, `POSTGRES_USER`, `POSTGRES_PASSWORD` |
+| `mysql` | `MYSQL_HOST`, `MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD` |
+| `oracle` | `ORACLE_DSN`, `ORACLE_USER`, `ORACLE_PASSWORD` |
+| `vertica` | `VERTICA_HOST`, `VERTICA_DATABASE`, `VERTICA_USER`, `VERTICA_PASSWORD` |
 
-Each supports `list_tables`, `describe`, `query`, and `export_query` (export results to CSV). All queries are read-only enforced.
+Each supports `list_tables`, `describe`, `query`, and `export_query`. Query restrictions depend on the profile—`readonly` and `developer` enforce SELECT-only, while `eval` allows mutations.
 
 ## Configuration
 
@@ -138,8 +182,8 @@ In interactive mode:
 ```bash
 $ SQLITE_DB=test_data.db uv run ro-agent
 ╭──────────────────────────────────────────────────────────────────────────────╮
-│ ro-agent - Read-only research assistant                                      │
-│ Model: gpt-5.1                                                               │
+│ ro-agent - Research assistant                                                │
+│ Profile: readonly | Model: gpt-5-mini                                        │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 
 > what tables are in the database?
@@ -198,6 +242,7 @@ Options:
   -w, --working-dir DIR  Working directory
   -m, --model MODEL      Model to use
   --base-url URL         API endpoint
+  --profile NAME         Capability profile (readonly, developer, eval, or path)
   -y, --auto-approve     Skip tool approval prompts
   -r, --resume ID        Resume conversation
   -l, --list             List saved conversations
