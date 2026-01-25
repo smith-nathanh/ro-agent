@@ -1,20 +1,18 @@
-"""Surgical file editing for eval environments.
+"""Surgical file editing using search-and-replace.
 
 Uses a search-and-replace approach with fuzzy matching for robustness.
-Inspired by Codex's apply_patch format but simplified for LLM ease-of-use.
-
-SAFETY: Only use in sandboxed eval containers.
-The container isolation provides security, not tool-level restrictions.
 """
 
 from pathlib import Path
 from typing import Any
 
-from ro_agent.tools.base import ToolHandler, ToolInvocation, ToolOutput
+from ..base import ToolHandler, ToolInvocation, ToolOutput
 
 
-class EditFileHandler(ToolHandler):
+class EditHandler(ToolHandler):
     """Make surgical edits to existing files using search-and-replace.
+
+    Standard agentic tool name: 'edit'
 
     The edit is atomic: if the search string isn't found (or isn't unique),
     the file is not modified and an error is returned.
@@ -25,9 +23,22 @@ class EditFileHandler(ToolHandler):
     3. Indentation-flexible match (leading whitespace normalized)
     """
 
+    def __init__(self, requires_approval: bool = False):
+        """Initialize EditHandler.
+
+        Args:
+            requires_approval: Whether this tool requires user approval.
+                              Defaults to False (container provides sandbox).
+        """
+        self._requires_approval = requires_approval
+
     @property
     def name(self) -> str:
-        return "edit_file"
+        return "edit"
+
+    @property
+    def requires_approval(self) -> bool:
+        return self._requires_approval
 
     @property
     def description(self) -> str:
@@ -61,10 +72,6 @@ class EditFileHandler(ToolHandler):
             },
             "required": ["path", "old_string", "new_string"],
         }
-
-    @property
-    def requires_approval(self) -> bool:
-        return False  # Container is the sandbox
 
     async def handle(self, invocation: ToolInvocation) -> ToolOutput:
         path_str = invocation.arguments.get("path", "")
@@ -183,25 +190,38 @@ class EditFileHandler(ToolHandler):
         return "\n".join(line.lstrip() for line in s.split("\n"))
 
     def _reindent(self, new_string: str, matched: str) -> str:
-        """Apply the indentation from matched to new_string."""
+        """Apply the indentation from matched to new_string, preserving relative indentation."""
         matched_lines = matched.split("\n")
         new_lines = new_string.split("\n")
 
-        if not matched_lines:
+        if not matched_lines or not new_lines:
             return new_string
 
-        # Detect indentation of first line in matched
+        # Detect base indentation of first line in matched
         first_indent = len(matched_lines[0]) - len(matched_lines[0].lstrip())
         base_indent = matched_lines[0][:first_indent]
 
-        # Apply to new_string (preserve relative indentation)
+        # Detect the minimum indentation in new_string (ignoring empty lines)
+        # This is the "base" from which relative indentation is measured
+        min_new_indent = float("inf")
+        for line in new_lines:
+            if line.strip():  # Non-empty line
+                line_indent = len(line) - len(line.lstrip())
+                min_new_indent = min(min_new_indent, line_indent)
+
+        if min_new_indent == float("inf"):
+            min_new_indent = 0
+
+        # Apply base_indent while preserving relative indentation
         result = []
-        for i, line in enumerate(new_lines):
-            if i == 0:
-                result.append(base_indent + line.lstrip())
-            elif line.strip():  # Non-empty line
-                result.append(base_indent + line.lstrip())
+        for line in new_lines:
+            if not line.strip():
+                result.append(line)  # Preserve empty lines as-is
             else:
-                result.append(line)  # Preserve empty lines
+                # Calculate relative indent from new_string's base
+                line_indent = len(line) - len(line.lstrip())
+                relative_indent = line_indent - min_new_indent
+                # Apply: base_indent + relative_indent + content
+                result.append(base_indent + (" " * relative_indent) + line.lstrip())
 
         return "\n".join(result)

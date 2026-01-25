@@ -14,7 +14,7 @@ except ImportError:
 
 
 class OracleHandler(DatabaseHandler):
-    """Read-only Oracle database handler."""
+    """Oracle database handler with configurable readonly mode."""
 
     def __init__(
         self,
@@ -36,10 +36,11 @@ class OracleHandler(DatabaseHandler):
     @property
     def description(self) -> str:
         conn_info = f"{self._user}@{self._dsn}" if self._user else self._dsn
+        mode_desc = "read-only" if self._readonly else "full"
         return (
             f"Query the Oracle database at {conn_info}. "
             f"Use 'list_tables' to see available tables, 'describe' for table schema, "
-            f"'query' for SELECT queries. All operations are read-only."
+            f"'query' for SQL queries ({mode_desc} access)."
         )
 
     def _get_connection(self) -> Any:
@@ -185,3 +186,12 @@ class OracleHandler(DatabaseHandler):
                 extra["indexes"] = indexes
 
         return extra if extra else None
+
+    def close(self) -> None:
+        """Close the Oracle database connection."""
+        if self._connection is not None:
+            try:
+                self._connection.close()
+            except Exception:
+                pass
+            self._connection = None

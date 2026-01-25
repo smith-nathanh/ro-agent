@@ -29,12 +29,15 @@ BINARY_EXTENSIONS = {
 }
 
 
-class ReadFileHandler(ToolHandler):
-    """Read contents of a file with optional line range."""
+class ReadHandler(ToolHandler):
+    """Read contents of a file with optional line range.
+
+    Standard agentic tool name: 'read'
+    """
 
     @property
     def name(self) -> str:
-        return "read_file"
+        return "read"
 
     @property
     def description(self) -> str:

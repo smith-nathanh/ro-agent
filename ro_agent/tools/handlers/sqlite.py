@@ -8,13 +8,18 @@ from .database import DatabaseHandler
 
 
 class SqliteHandler(DatabaseHandler):
-    """Read-only SQLite database handler."""
+    """SQLite database handler with configurable readonly mode."""
 
     def __init__(self, db_path: str | None = None, **kwargs: Any) -> None:
         """Initialize SQLite handler.
 
         Connection can be configured via constructor arg or environment variable:
         - SQLITE_DB: Path to SQLite database file
+
+        Args:
+            db_path: Path to SQLite database file.
+            readonly: If True (default), opens database in read-only mode.
+            **kwargs: Passed to DatabaseHandler (row_limit, readonly, etc.)
         """
         super().__init__(**kwargs)
         self._db_path = db_path or os.environ.get("SQLITE_DB", "")
@@ -26,10 +31,11 @@ class SqliteHandler(DatabaseHandler):
 
     @property
     def description(self) -> str:
+        mode_desc = "read-only" if self._readonly else "full"
         return (
             f"Query the SQLite database at {self._db_path}. "
             f"Use 'list_tables' to see available tables, 'describe' for table schema, "
-            f"'query' for SELECT queries. All operations are read-only."
+            f"'query' for SQL queries ({mode_desc} access)."
         )
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -37,9 +43,10 @@ class SqliteHandler(DatabaseHandler):
             raise RuntimeError("No SQLite database configured. Set SQLITE_DB env var.")
 
         if self._connection is None:
-            # Open in read-only mode via URI
+            # Open in read-only or read-write mode based on readonly flag
+            mode = "ro" if self._readonly else "rw"
             self._connection = sqlite3.connect(
-                f"file:{self._db_path}?mode=ro",
+                f"file:{self._db_path}?mode={mode}",
                 uri=True,
                 check_same_thread=False,
             )
@@ -121,3 +128,9 @@ class SqliteHandler(DatabaseHandler):
             extra["indexes"] = indexes
 
         return extra if extra else None
+
+    def close(self) -> None:
+        """Close the SQLite connection."""
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None

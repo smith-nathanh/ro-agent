@@ -1,7 +1,7 @@
 """Harbor/TerminalBench integration for ro-agent.
 
-This module provides tools and wrappers for running ro-agent inside
-Harbor's sandboxed container environments for TerminalBench evaluation.
+This module provides the runner for executing ro-agent inside Harbor's
+sandboxed container environments for TerminalBench evaluation.
 
 Usage:
     # From within a Harbor container:
@@ -12,10 +12,11 @@ Usage:
     #   - import_path: ro_agent.harbor.agent:RoAgent
 """
 
-from .tools import BashHandler, EditFileHandler, WriteFileHandler
+# Re-export handlers for convenience
+from ro_agent.tools.handlers import BashHandler, WriteHandler, EditHandler
 
 __all__ = [
     "BashHandler",
-    "EditFileHandler",
-    "WriteFileHandler",
+    "WriteHandler",
+    "EditHandler",
 ]

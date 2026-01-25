@@ -1,29 +1,61 @@
-"""Tool handlers for ro-agent."""
+"""Tool handlers for ro-agent.
 
-from .find_files import FindFilesHandler
-from .list_dir import ListDirHandler
+This module exports the standard 8-tool agentic toolkit plus database tools:
+
+Core Tools (always available):
+- ReadHandler (read) - Read file contents with line numbers
+- GlobHandler (glob) - Find files by pattern using ripgrep
+- GrepHandler (grep) - Search file contents using ripgrep
+- ListHandler (list) - List directory contents
+- ReadExcelHandler (read_excel) - Read Excel files
+
+Mode-dependent Tools:
+- BashHandler (bash) - Shell execution (restricted or unrestricted)
+- WriteHandler (write) - File writing (off, create-only, or full)
+- EditHandler (edit) - Surgical file editing (only with file_write=full)
+
+Database Tools (enabled via env vars):
+- OracleHandler (oracle)
+- MysqlHandler (mysql)
+- SqliteHandler (sqlite)
+- VerticaHandler (vertica)
+- PostgresHandler (postgres)
+"""
+
+# Core tools
+from .read import ReadHandler
+from .glob import GlobHandler
+from .grep import GrepHandler
+from .list import ListHandler
+from .read_excel import ReadExcelHandler
+
+# Mode-dependent tools
+from .bash import BashHandler
+from .write import WriteHandler
+from .edit import EditHandler
+
+# Database tools
 from .mysql import MysqlHandler
 from .oracle import OracleHandler
 from .postgres import PostgresHandler
-from .read_excel import ReadExcelHandler
-from .read_file import ReadFileHandler
-from .search import SearchHandler
-from .shell import ShellHandler
 from .sqlite import SqliteHandler
 from .vertica import VerticaHandler
-from .write_output import WriteOutputHandler
 
 __all__ = [
-    "FindFilesHandler",
-    "ListDirHandler",
+    # Core tools
+    "ReadHandler",
+    "GlobHandler",
+    "GrepHandler",
+    "ListHandler",
+    "ReadExcelHandler",
+    # Mode-dependent tools
+    "BashHandler",
+    "WriteHandler",
+    "EditHandler",
+    # Database handlers
     "MysqlHandler",
     "OracleHandler",
     "PostgresHandler",
-    "ReadExcelHandler",
-    "ReadFileHandler",
-    "SearchHandler",
-    "ShellHandler",
     "SqliteHandler",
     "VerticaHandler",
-    "WriteOutputHandler",
 ]

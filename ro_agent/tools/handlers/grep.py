@@ -1,4 +1,4 @@
-"""Search file contents using ripgrep (rg) for efficiency."""
+"""Search file contents using ripgrep."""
 
 import asyncio
 import shutil
@@ -13,8 +13,10 @@ DEFAULT_CONTEXT_LINES = 0
 DEFAULT_TIMEOUT = 30  # seconds
 
 
-class SearchHandler(ToolHandler):
+class GrepHandler(ToolHandler):
     """Search for patterns in files using ripgrep.
+
+    Standard agentic tool name: 'grep'
 
     Uses `rg` under the hood for efficient streaming search without
     loading files into memory. Suitable for searching large log files.
@@ -26,7 +28,7 @@ class SearchHandler(ToolHandler):
 
     @property
     def name(self) -> str:
-        return "search"
+        return "grep"
 
     @property
     def description(self) -> str:

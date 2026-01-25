@@ -1,4 +1,9 @@
-"""Shell command execution handler."""
+"""Bash execution handler with configurable restrictions.
+
+Supports two modes:
+- RESTRICTED: Only allowlisted read-only commands (grep, cat, find, etc.)
+- UNRESTRICTED: Any command allowed (for sandboxed container environments)
+"""
 
 import asyncio
 import os
@@ -6,9 +11,10 @@ from typing import Any
 
 from ..base import ToolHandler, ToolInvocation, ToolOutput
 
-DEFAULT_TIMEOUT = 120  # seconds
+DEFAULT_TIMEOUT_RESTRICTED = 120  # seconds
+DEFAULT_TIMEOUT_UNRESTRICTED = 300  # 5 minutes for complex builds
 
-# Allowlist of safe read-only commands
+# Allowlist of safe read-only commands (used in RESTRICTED mode)
 ALLOWED_COMMANDS = {
     # File inspection
     "cat",
@@ -99,7 +105,7 @@ ALLOWED_COMMANDS = {
     "strings",
 }
 
-# Patterns that indicate write operations (block these)
+# Patterns that indicate write operations (blocked in RESTRICTED mode)
 DANGEROUS_PATTERNS = [
     ">",  # Redirect (overwrite)
     ">>",  # Redirect (append)
@@ -167,7 +173,7 @@ def extract_base_command(command: str) -> str | None:
 
 
 def is_command_allowed(command: str) -> tuple[bool, str]:
-    """Check if a command is allowed. Returns (allowed, reason)."""
+    """Check if a command is allowed in RESTRICTED mode. Returns (allowed, reason)."""
     # Check for dangerous patterns first
     for pattern in DANGEROUS_PATTERNS:
         if pattern in command:
@@ -185,30 +191,62 @@ def is_command_allowed(command: str) -> tuple[bool, str]:
     return True, ""
 
 
-class ShellHandler(ToolHandler):
-    """Execute shell commands for inspection and research."""
+class BashHandler(ToolHandler):
+    """Execute shell commands with configurable restrictions.
+
+    Standard agentic tool name: 'bash'
+
+    Modes:
+    - RESTRICTED: Only allowlisted commands, dangerous patterns blocked
+    - UNRESTRICTED: Any command allowed (container provides sandbox)
+    """
 
     def __init__(
-        self, working_dir: str | None = None, timeout: int = DEFAULT_TIMEOUT
-    ) -> None:
+        self,
+        restricted: bool = True,
+        working_dir: str | None = None,
+        timeout: int | None = None,
+        requires_approval: bool | None = None,
+    ):
+        """Initialize BashHandler.
+
+        Args:
+            restricted: If True, use command allowlist (default). If False, allow all commands.
+            working_dir: Default working directory for commands.
+            timeout: Command timeout in seconds. Defaults to 120s (restricted) or 300s (unrestricted).
+            requires_approval: Override whether approval is required. Defaults to True for restricted,
+                              False for unrestricted.
+        """
+        self._restricted = restricted
         self._working_dir = working_dir or os.getcwd()
-        self._timeout = timeout
+        self._timeout = timeout or (
+            DEFAULT_TIMEOUT_RESTRICTED if restricted else DEFAULT_TIMEOUT_UNRESTRICTED
+        )
+        # Default approval: not required for restricted (allowlist protects),
+        # required for unrestricted outside sandboxes (but factory overrides for eval)
+        self._requires_approval = requires_approval if requires_approval is not None else (not restricted)
 
     @property
     def name(self) -> str:
-        return "shell"
+        return "bash"
 
     @property
     def requires_approval(self) -> bool:
-        return True
+        return self._requires_approval
 
     @property
     def description(self) -> str:
-        return (
-            "Execute a shell command to inspect files, logs, or system state. "
-            "Use this for text-based inspection with tools like grep, cat, head, "
-            "tail, find, jq, yq, etc. Commands are read-only."
-        )
+        if self._restricted:
+            return (
+                "Execute a shell command to inspect files, logs, or system state. "
+                "Use this for text-based inspection with tools like grep, cat, head, "
+                "tail, find, jq, yq, etc. Commands are read-only."
+            )
+        else:
+            return (
+                "Execute a bash command. Use for running programs, installing packages, "
+                "building code, file operations, and any other shell tasks."
+            )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -221,7 +259,11 @@ class ShellHandler(ToolHandler):
                 },
                 "working_dir": {
                     "type": "string",
-                    "description": "Working directory for the command (optional)",
+                    "description": f"Working directory for the command (default: {self._working_dir})",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": f"Timeout in seconds (default: {self._timeout})",
                 },
             },
             "required": ["command"],
@@ -231,17 +273,19 @@ class ShellHandler(ToolHandler):
         """Execute the shell command and return output."""
         command = invocation.arguments.get("command", "")
         working_dir = invocation.arguments.get("working_dir", self._working_dir)
+        timeout = invocation.arguments.get("timeout", self._timeout)
 
         if not command:
             return ToolOutput(content="No command provided", success=False)
 
-        # Check if command is allowed
-        allowed, reason = is_command_allowed(command)
-        if not allowed:
-            return ToolOutput(
-                content=f"Command blocked: {reason}",
-                success=False,
-            )
+        # Check if command is allowed (only in restricted mode)
+        if self._restricted:
+            allowed, reason = is_command_allowed(command)
+            if not allowed:
+                return ToolOutput(
+                    content=f"Command blocked: {reason}",
+                    success=False,
+                )
 
         try:
             process = await asyncio.create_subprocess_shell(
@@ -254,7 +298,7 @@ class ShellHandler(ToolHandler):
             try:
                 stdout, stderr = await asyncio.wait_for(
                     process.communicate(),
-                    timeout=self._timeout,
+                    timeout=timeout,
                 )
             except asyncio.CancelledError:
                 # Clean up subprocess on cancellation
@@ -265,9 +309,9 @@ class ShellHandler(ToolHandler):
                 process.kill()
                 await process.wait()
                 return ToolOutput(
-                    content=f"Command timed out after {self._timeout} seconds",
+                    content=f"Command timed out after {timeout} seconds",
                     success=False,
-                    metadata={"timed_out": True},
+                    metadata={"timed_out": True, "exit_code": -1},
                 )
 
             exit_code = process.returncode
@@ -292,6 +336,11 @@ class ShellHandler(ToolHandler):
                 },
             )
 
+        except FileNotFoundError:
+            return ToolOutput(
+                content=f"Working directory not found: {working_dir}",
+                success=False,
+            )
         except Exception as e:
             return ToolOutput(
                 content=f"Error executing command: {e}",

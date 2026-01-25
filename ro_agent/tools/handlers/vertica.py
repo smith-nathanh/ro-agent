@@ -14,7 +14,7 @@ except ImportError:
 
 
 class VerticaHandler(DatabaseHandler):
-    """Read-only Vertica database handler."""
+    """Vertica database handler with configurable readonly mode."""
 
     def __init__(
         self,
@@ -40,10 +40,11 @@ class VerticaHandler(DatabaseHandler):
     @property
     def description(self) -> str:
         conn_info = f"{self._host}:{self._port}/{self._database}"
+        mode_desc = "read-only" if self._readonly else "full"
         return (
             f"Query the Vertica database at {conn_info}. "
             f"Use 'list_tables' to see available tables, 'describe' for table schema, "
-            f"'query' for SELECT queries. All operations are read-only."
+            f"'query' for SQL queries ({mode_desc} access)."
         )
 
     def _get_connection(self) -> Any:
@@ -59,7 +60,7 @@ class VerticaHandler(DatabaseHandler):
                 database=self._database,
                 user=self._user,
                 password=self._password,
-                read_only=True,  # Enforce read-only at connection level
+                read_only=self._readonly,  # Honor readonly mode
             )
         return self._connection
 
@@ -202,3 +203,12 @@ class VerticaHandler(DatabaseHandler):
                 extra["indexes"] = projections  # Reuse indexes field for projections
 
         return extra if extra else None
+
+    def close(self) -> None:
+        """Close the Vertica database connection."""
+        if self._connection is not None:
+            try:
+                self._connection.close()
+            except Exception:
+                pass
+            self._connection = None

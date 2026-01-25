@@ -1,7 +1,8 @@
 """Entry point for running ro-agent inside Harbor containers.
 
-This module runs ro-agent with unrestricted eval-mode tools.
-The container provides sandboxing, so tool-level restrictions are unnecessary.
+This module runs ro-agent with unrestricted eval-mode tools using the
+capability profile system. The container provides sandboxing, so tool-level
+restrictions are unnecessary.
 
 Usage:
     python -m ro_agent.harbor.runner "<instruction>" [working_dir]
@@ -20,17 +21,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from ro_agent.capabilities import CapabilityProfile
+from ro_agent.capabilities.factory import ToolFactory
 from ro_agent.client.model import ModelClient
 from ro_agent.core.agent import Agent
 from ro_agent.core.session import Session
-from ro_agent.harbor.tools import BashHandler, EditFileHandler, WriteFileHandler
-from ro_agent.tools.handlers import (
-    FindFilesHandler,
-    ListDirHandler,
-    ReadFileHandler,
-    SearchHandler,
-)
-from ro_agent.tools.registry import ToolRegistry
 
 # Load .env file - try multiple locations
 # 1. Current directory
@@ -47,17 +42,17 @@ You are an AI agent that completes tasks in a Linux environment.
 
 Available tools:
 - bash: Execute any shell command
-- write_file: Create or overwrite a file
-- edit_file: Make surgical edits to existing files
-- read_file: Read file contents
-- search: Search for patterns in files (using ripgrep)
-- find_files: Find files by name/pattern
-- list_dir: List directory contents
+- write: Create or overwrite a file
+- edit: Make surgical edits to existing files
+- read: Read file contents
+- grep: Search for patterns in files (using ripgrep)
+- glob: Find files by name/pattern
+- list: List directory contents
 
 Guidelines:
 - Execute commands to investigate and solve problems
-- Use edit_file for surgical changes to existing files
-- Use write_file to create new files or fully replace content
+- Use edit for surgical changes to existing files
+- Use write to create new files or fully replace content
 - Read files before editing them to understand the current state
 - Be precise and efficient
 - If a task requires installing packages, use pip/apt as needed
@@ -78,18 +73,11 @@ async def run_task(instruction: str, working_dir: str = "/app") -> None:
         working_dir: Working directory for shell commands (default: /app).
     """
     session = Session(system_prompt=SYSTEM_PROMPT)
-    registry = ToolRegistry()
 
-    # Register eval-mode tools (unrestricted)
-    registry.register(BashHandler(working_dir=working_dir))
-    registry.register(WriteFileHandler())
-    registry.register(EditFileHandler())
-
-    # Register read-only tools
-    registry.register(ReadFileHandler())
-    registry.register(SearchHandler())
-    registry.register(FindFilesHandler())
-    registry.register(ListDirHandler())
+    # Use eval profile - unrestricted, no approval required
+    profile = CapabilityProfile.eval(working_dir=working_dir)
+    factory = ToolFactory(profile)
+    registry = factory.create_registry(working_dir=working_dir)
 
     # Create client from environment
     model = os.environ.get("RO_AGENT_MODEL", "gpt-5-mini")
