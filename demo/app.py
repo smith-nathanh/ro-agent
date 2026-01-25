@@ -144,18 +144,18 @@ def render_chat_tab() -> None:
                                 # Use code block for monospace formatting
                                 st.code(result, language=None)
 
-                            # Add "Copy to SQL Editor" button for sqlite tool calls
+                            # Add "Open in SQL Editor" button for sqlite tool calls
                             if tc["name"] == "sqlite":
-                                action = args.get("action", "")
+                                operation = args.get("operation", "")
                                 sql_to_copy = None
-                                button_label = "📋 Copy to SQL Editor"
+                                button_label = "→ Open in SQL Editor"
 
-                                if action == "query" and args.get("sql"):
+                                if operation == "query" and args.get("sql"):
                                     sql_to_copy = args["sql"]
-                                elif action == "describe" and args.get("table"):
+                                elif operation == "describe" and args.get("table_name"):
                                     # Offer a starter SELECT query for the described table
-                                    sql_to_copy = f"SELECT * FROM {args['table']} LIMIT 10;"
-                                    button_label = "📋 Copy SELECT query"
+                                    sql_to_copy = f"SELECT * FROM {args['table_name']} LIMIT 10;"
+                                    button_label = "→ Open query in Editor"
 
                                 if sql_to_copy:
                                     if st.button(button_label, key=f"copy_sql_{msg_idx}_{tc_idx}"):
@@ -163,28 +163,70 @@ def render_chat_tab() -> None:
                                         st.toast("Query copied to SQL Editor!")
                                         st.rerun()
 
-        # If processing, show spinner inside the chat container
+        # If processing, stream events in real-time
         if pending_prompt:
             with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    events = asyncio.run(run_agent_turn(pending_prompt))
+                # Placeholders for streaming content
+                status_placeholder = st.empty()
+                text_placeholder = st.empty()
+                tool_container = st.container()
 
-            # Process events
-            response_text = ""
-            tool_calls = []
+                response_text = ""
+                tool_calls = []
+                current_tool_placeholder = None
 
-            for event in events:
-                if event.type == "text" and event.content:
-                    response_text += event.content
-                elif event.type == "tool_start":
-                    tool_calls.append({
-                        "name": event.tool_name,
-                        "args": event.tool_args,
-                        "query": event.tool_args.get("sql", "") if event.tool_args else "",
-                    })
-                elif event.type == "tool_end":
-                    if tool_calls:
-                        tool_calls[-1]["result"] = event.tool_result
+                async def stream_events():
+                    nonlocal response_text, tool_calls, current_tool_placeholder
+
+                    session = Session(system_prompt=SYSTEM_PROMPT)
+                    for msg in st.session_state.messages[:-1]:  # Exclude the pending user message we just added
+                        if msg["role"] == "user":
+                            session.add_user_message(msg["content"])
+                        elif msg["role"] == "assistant":
+                            session.add_assistant_message(msg["content"])
+
+                    registry = ToolRegistry()
+                    handler = SqliteHandler(db_path=str(DB_PATH), readonly=True)
+                    registry.register(handler)
+
+                    client = ModelClient()
+                    agent = Agent(session=session, registry=registry, client=client)
+
+                    async for event in agent.run_turn(pending_prompt):
+                        if event.type == "text" and event.content:
+                            response_text += event.content
+                            text_placeholder.markdown(response_text + "▌")
+                        elif event.type == "tool_start":
+                            status_placeholder.empty()
+                            args = event.tool_args or {}
+                            arg_parts = [f"{k}='{v}'" if isinstance(v, str) else f"{k}={v}" for k, v in args.items()]
+                            sig = f"{event.tool_name}({', '.join(arg_parts)})"
+                            tool_calls.append({
+                                "name": event.tool_name,
+                                "args": args,
+                                "sig": sig,
+                            })
+                            with tool_container:
+                                current_tool_placeholder = st.empty()
+                                current_tool_placeholder.markdown(f"`{sig}` ...")
+                        elif event.type == "tool_end":
+                            if tool_calls:
+                                tool_calls[-1]["result"] = event.tool_result
+                            if current_tool_placeholder:
+                                sig = tool_calls[-1]["sig"] if tool_calls else event.tool_name
+                                current_tool_placeholder.markdown(f"`{sig}`")
+                                current_tool_placeholder = None
+
+                    # Clear the cursor
+                    if response_text:
+                        text_placeholder.markdown(response_text)
+                    status_placeholder.empty()
+
+                # Show initial status
+                status_placeholder.markdown("*Thinking...*")
+
+                # Run the async stream
+                asyncio.run(stream_events())
 
             # Save response to history
             st.session_state.messages.append({
@@ -193,7 +235,7 @@ def render_chat_tab() -> None:
                 "tool_calls": tool_calls,
             })
 
-            # Clear pending prompt and rerun to show the response
+            # Clear pending prompt and rerun to show the final response
             st.session_state.pending_prompt = None
             st.rerun()
 
@@ -207,13 +249,18 @@ def render_chat_tab() -> None:
 
 def render_sql_tab() -> None:
     """Render the SQL editor tab."""
-    # Initialize editor content from session state
-    default_sql = st.session_state.get("sql_editor_content", "SELECT * FROM employees LIMIT 10;")
+    # Check if we have SQL to load into the editor
+    if "sql_editor_content" in st.session_state and st.session_state.sql_editor_content:
+        st.session_state.sql_editor = st.session_state.sql_editor_content
+        del st.session_state.sql_editor_content
+
+    # Initialize default if not set
+    if "sql_editor" not in st.session_state:
+        st.session_state.sql_editor = "SELECT * FROM employees LIMIT 10;"
 
     # SQL input
     sql = st.text_area(
         "Enter SQL query:",
-        value=default_sql,
         height=150,
         key="sql_editor",
         help="Write your own SQL queries here",
@@ -226,7 +273,7 @@ def render_sql_tab() -> None:
 
     with col2:
         if st.button("Clear"):
-            st.session_state.sql_editor_content = ""
+            st.session_state.sql_editor = ""
             st.rerun()
 
     with col3:
@@ -250,7 +297,7 @@ def render_sql_tab() -> None:
                 format_func=lambda x: x[:50] + "..." if len(x) > 50 else x if x else "Select previous query...",
             )
             if selected:
-                st.session_state.sql_editor_content = selected
+                st.session_state.sql_editor = selected
                 st.rerun()
 
     # Execute query

@@ -1,0 +1,78 @@
+# SQL Explorer Demo
+
+A Streamlit web app demonstrating ro-agent's database exploration capabilities. Chat with an AI agent to explore a SQLite database, then export queries and results.
+
+## Quick Start
+
+```bash
+# 1. Seed the sample database (one-time)
+python demo/seed_database.py
+
+# 2. Launch the app
+uv run streamlit run demo/app.py
+```
+
+The app opens at http://localhost:8501
+
+## Features
+
+### Agent Chat
+
+Ask questions in natural language and watch the agent explore the database in real-time:
+
+- "What tables are available?"
+- "Show me the top 5 highest paid employees"
+- "Which department has the most projects?"
+
+The agent streams its work as it happens—you'll see each tool call execute and return results.
+
+### SQL Editor
+
+Write and run your own SQL queries:
+
+- Execute queries directly against the database
+- View results in a table
+- Export to CSV
+
+### Bidirectional Workflow
+
+The app supports iterating between the agent and manual SQL:
+
+**Agent → SQL Editor**: When the agent runs a query, click "Open in SQL Editor" to copy it. Then tweak it, run it yourself, and export results.
+
+**SQL Editor → Agent**: Have a complex query you need help with? Click "Send to Agent" to get assistance debugging, optimizing, or explaining it.
+
+## Sample Database
+
+The `seed_database.py` script creates a sample company database with:
+
+| Table | Description |
+|-------|-------------|
+| `employees` | Employee records with name, email, salary, hire date |
+| `departments` | Department names and budgets |
+| `projects` | Projects with status, deadlines, assigned departments |
+| `timesheets` | Employee time entries on projects |
+
+## Configuration
+
+Set your OpenAI API key (or compatible endpoint):
+
+```bash
+# .env file in project root
+OPENAI_API_KEY=your-key
+
+# Or for alternative providers
+OPENAI_BASE_URL=http://localhost:8000/v1
+OPENAI_MODEL=gpt-5-mini
+```
+
+## Architecture
+
+The demo uses ro-agent's core components:
+
+- `Agent` - Orchestrates the conversation loop
+- `Session` - Manages conversation history
+- `SqliteHandler` - Provides database access (readonly mode)
+- `ModelClient` - Streams responses from the LLM
+
+See [ARCHITECTURE.md](../ARCHITECTURE.md) for details on the agent harness.

@@ -19,6 +19,15 @@ The `readonly` profile enforces system-level restrictions for safe inspection of
 - **Observability**: Session tracking, token usage, tool execution metrics with Streamlit dashboard
 - **Evaluation integrations**: AgentBench (DBBench, OS Interaction) and Harbor/TerminalBench
 
+## Demo
+
+Try the [SQL Explorer Demo](demo/README.md)—a Streamlit web app for chatting with an agent to explore a database, then exporting queries and results.
+
+```bash
+python demo/seed_database.py      # seed sample database
+uv run streamlit run demo/app.py  # launch app
+```
+
 ## Installation
 
 ```bash

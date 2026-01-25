@@ -21,3 +21,6 @@ wheels/
 test_data.db
 results/
 demo/*db
+
+# Reference prompts from Codex CLI
+.codex-prompts/
