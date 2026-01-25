@@ -1,5 +1,26 @@
 #!/usr/bin/env python3
-"""Streamlit demo app for ro-agent with SQL exploration."""
+"""Streamlit demo app for ro-agent with SQL exploration.
+
+Launch instructions:
+    # First, seed the sample database (one-time setup)
+    python demo/seed_database.py
+
+    # Then launch the Streamlit app
+    streamlit run demo/app.py
+
+    # Or with uv
+    uv run streamlit run demo/app.py
+
+The app will open at http://localhost:8501
+
+Features:
+    - Agent Chat: Ask questions about the database in natural language
+    - SQL Editor: Write and execute your own SQL queries
+
+Environment:
+    Requires OPENAI_API_KEY (or OPENAI_BASE_URL for alternative providers)
+    set in .env or environment.
+"""
 
 import asyncio
 import sqlite3
@@ -40,8 +61,8 @@ def init_session_state() -> None:
         st.session_state.messages = []
     if "query_history" not in st.session_state:
         st.session_state.query_history = []
-    if "last_agent_query" not in st.session_state:
-        st.session_state.last_agent_query = ""
+    if "pending_prompt" not in st.session_state:
+        st.session_state.pending_prompt = None
 
 
 def get_db_connection() -> sqlite3.Connection:
@@ -91,69 +112,96 @@ async def run_agent_turn(user_input: str) -> list[AgentEvent]:
 
 def render_chat_tab() -> None:
     """Render the agent chat tab."""
+    # Check if we have a pending prompt to process
+    pending_prompt = st.session_state.get("pending_prompt")
+
     # Chat messages container with scrolling
     chat_container = st.container(height=500)
 
     with chat_container:
         # Display message history
-        for msg in st.session_state.messages:
+        for msg_idx, msg in enumerate(st.session_state.messages):
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
 
-                # Show tool calls if present
+                # Show tool calls if present (terminal-style formatting)
                 if msg.get("tool_calls"):
-                    for tc in msg["tool_calls"]:
-                        with st.expander(f"Tool: {tc['name']}", expanded=False):
-                            st.code(tc.get("query", str(tc.get("args", {}))), language="sql")
-                            if tc.get("result"):
-                                st.text(tc["result"][:500] + "..." if len(tc.get("result", "")) > 500 else tc.get("result", ""))
+                    for tc_idx, tc in enumerate(msg["tool_calls"]):
+                        # Format signature like terminal: sqlite(action='describe', table='employees')
+                        args = tc.get("args", {})
+                        if args:
+                            arg_parts = [f"{k}='{v}'" if isinstance(v, str) else f"{k}={v}" for k, v in args.items()]
+                            sig = f"{tc['name']}({', '.join(arg_parts)})"
+                        else:
+                            sig = f"{tc['name']}()"
 
-    # Copy query button (above input)
-    if st.session_state.last_agent_query:
-        if st.button("Copy last query to SQL Editor"):
-            st.session_state.sql_editor_content = st.session_state.last_agent_query
+                        with st.expander(f"⚡ {sig}", expanded=False):
+                            if tc.get("result"):
+                                result = tc["result"]
+                                # Truncate long results
+                                if len(result) > 1500:
+                                    result = result[:1500] + "\n... (truncated)"
+                                # Use code block for monospace formatting
+                                st.code(result, language=None)
+
+                            # Add "Copy to SQL Editor" button for sqlite tool calls
+                            if tc["name"] == "sqlite":
+                                action = args.get("action", "")
+                                sql_to_copy = None
+                                button_label = "📋 Copy to SQL Editor"
+
+                                if action == "query" and args.get("sql"):
+                                    sql_to_copy = args["sql"]
+                                elif action == "describe" and args.get("table"):
+                                    # Offer a starter SELECT query for the described table
+                                    sql_to_copy = f"SELECT * FROM {args['table']} LIMIT 10;"
+                                    button_label = "📋 Copy SELECT query"
+
+                                if sql_to_copy:
+                                    if st.button(button_label, key=f"copy_sql_{msg_idx}_{tc_idx}"):
+                                        st.session_state.sql_editor_content = sql_to_copy
+                                        st.toast("Query copied to SQL Editor!")
+                                        st.rerun()
+
+        # If processing, show spinner inside the chat container
+        if pending_prompt:
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    events = asyncio.run(run_agent_turn(pending_prompt))
+
+            # Process events
+            response_text = ""
+            tool_calls = []
+
+            for event in events:
+                if event.type == "text" and event.content:
+                    response_text += event.content
+                elif event.type == "tool_start":
+                    tool_calls.append({
+                        "name": event.tool_name,
+                        "args": event.tool_args,
+                        "query": event.tool_args.get("sql", "") if event.tool_args else "",
+                    })
+                elif event.type == "tool_end":
+                    if tool_calls:
+                        tool_calls[-1]["result"] = event.tool_result
+
+            # Save response to history
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": response_text,
+                "tool_calls": tool_calls,
+            })
+
+            # Clear pending prompt and rerun to show the response
+            st.session_state.pending_prompt = None
             st.rerun()
 
     # Chat input at the bottom
     if prompt := st.chat_input("Ask about the database..."):
-        # Add user message
+        # Add user message and set pending prompt
         st.session_state.messages.append({"role": "user", "content": prompt})
-
-        # Run agent and process response
-        with st.spinner("Thinking..."):
-            events = asyncio.run(run_agent_turn(prompt))
-
-        # Process events
-        response_text = ""
-        tool_calls = []
-
-        for event in events:
-            if event.type == "text" and event.content:
-                response_text += event.content
-            elif event.type == "tool_start":
-                tool_calls.append({
-                    "name": event.tool_name,
-                    "args": event.tool_args,
-                    "query": event.tool_args.get("sql", "") if event.tool_args else "",
-                })
-            elif event.type == "tool_end":
-                if tool_calls:
-                    tool_calls[-1]["result"] = event.tool_result
-
-                # Capture SQL queries for the editor
-                if event.tool_name == "sqlite" and tool_calls:
-                    args = tool_calls[-1].get("args", {})
-                    if args.get("action") == "query" and args.get("sql"):
-                        st.session_state.last_agent_query = args["sql"]
-
-        # Save to history
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": response_text,
-            "tool_calls": tool_calls,
-        })
-
-        # Rerun to show the new messages in the container
+        st.session_state.pending_prompt = prompt
         st.rerun()
 
 
@@ -171,7 +219,7 @@ def render_sql_tab() -> None:
         help="Write your own SQL queries here",
     )
 
-    col1, col2, col3 = st.columns([1, 1, 2])
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
 
     with col1:
         run_clicked = st.button("Run Query", type="primary")
@@ -181,8 +229,20 @@ def render_sql_tab() -> None:
             st.session_state.sql_editor_content = ""
             st.rerun()
 
-    # Query history dropdown
     with col3:
+        if st.button("🤖 Send to Agent"):
+            if sql.strip():
+                # Create a message asking the agent to help with this query
+                prompt = f"Help me with this SQL query:\n\n```sql\n{sql.strip()}\n```"
+                st.session_state.messages.append({"role": "user", "content": prompt})
+                st.session_state.pending_prompt = prompt
+                st.toast("Query sent! Switch to Agent Chat tab.")
+                st.rerun()
+            else:
+                st.toast("No SQL query to send")
+
+    # Query history dropdown
+    with col4:
         if st.session_state.query_history:
             selected = st.selectbox(
                 "Query History",
@@ -287,7 +347,6 @@ def main() -> None:
 
         if st.button("Clear Conversation"):
             st.session_state.messages = []
-            st.session_state.last_agent_query = ""
             st.rerun()
 
         st.markdown("---")
