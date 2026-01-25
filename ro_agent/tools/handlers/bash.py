@@ -1,7 +1,8 @@
-"""Unified bash execution handler with mode support.
+"""Bash execution handler with configurable restrictions.
 
-Merges the restricted ShellHandler (allowlist-based) and unrestricted BashHandler
-(for sandboxed containers) into a single implementation with configurable mode.
+Supports two modes:
+- RESTRICTED: Only allowlisted read-only commands (grep, cat, find, etc.)
+- UNRESTRICTED: Any command allowed (for sandboxed container environments)
 """
 
 import asyncio

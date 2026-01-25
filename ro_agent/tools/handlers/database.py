@@ -1,4 +1,4 @@
-"""Base class for read-only database handlers."""
+"""Base class for database handlers."""
 
 import csv
 import re

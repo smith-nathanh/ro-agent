@@ -1,7 +1,4 @@
-"""Find files by name or path pattern using ripgrep.
-
-Renamed from find_files.py to glob.py with tool name 'glob'.
-"""
+"""Find files by name or path pattern using ripgrep."""
 
 import asyncio
 import shutil

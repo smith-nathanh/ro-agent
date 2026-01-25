@@ -1,7 +1,4 @@
-"""Read file contents handler.
-
-Renamed from read_file.py to read.py with tool name 'read'.
-"""
+"""Read file contents handler."""
 
 from pathlib import Path
 from typing import Any

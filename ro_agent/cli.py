@@ -231,8 +231,8 @@ def _format_tool_signature(tool_name: str, tool_args: dict[str, Any] | None) -> 
     if not tool_args:
         return f"{tool_name}()"
 
-    # For shell/bash commands, show just the command
-    if tool_name in ("shell", "bash") and "command" in tool_args:
+    # For bash commands, show just the command
+    if tool_name == "bash" and "command" in tool_args:
         return f"{tool_name}({tool_args['command']})"
 
     # For other tools, show all args (no truncation)
@@ -257,8 +257,8 @@ def _format_tool_summary(
 
     # Use metadata if available
     if metadata:
-        # Search/grep tools
-        if tool_name in ("search", "grep"):
+        # grep tool
+        if tool_name == "grep":
             matches = metadata.get("matches", 0)
             truncated = metadata.get("truncated", False)
             if matches:
@@ -266,29 +266,29 @@ def _format_tool_summary(
                 return f"{matches}{suffix} matches"
             return "No matches"
 
-        # Read file tools
-        if tool_name in ("read_file", "read"):
+        # read tool
+        if tool_name == "read":
             total = metadata.get("total_lines", 0)
             start = metadata.get("start_line", 1)
             end = metadata.get("end_line", total)
             if total:
                 return f"Read lines {start}-{end} of {total}"
 
-        # List directory tools
-        if tool_name in ("list_dir", "list"):
+        # list tool
+        if tool_name == "list":
             count = metadata.get("item_count", 0)
             if count:
                 return f"{count} items"
 
-        # Write tools
-        if tool_name in ("write_output", "write"):
+        # write tool
+        if tool_name == "write":
             size = metadata.get("size_bytes", 0)
             lines = metadata.get("lines", 0)
             if size:
                 return f"Wrote {size} bytes ({lines} lines)"
 
-        # Glob/find tools
-        if tool_name in ("find_files", "glob"):
+        # glob tool
+        if tool_name == "glob":
             matches = metadata.get("matches", 0)
             total = metadata.get("total", matches)
             if matches:

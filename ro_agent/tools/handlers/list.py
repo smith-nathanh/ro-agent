@@ -1,7 +1,4 @@
-"""List directory contents handler.
-
-Renamed from list_dir.py to list.py with tool name 'list'.
-"""
+"""List directory contents handler."""
 
 import os
 import stat

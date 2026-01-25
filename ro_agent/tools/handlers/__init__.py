@@ -20,18 +20,9 @@ Database Tools (enabled via env vars):
 - SqliteHandler (sqlite)
 - VerticaHandler (vertica)
 - PostgresHandler (postgres)
-
-Backward Compatibility Aliases:
-The following aliases are provided for existing code:
-- ReadFileHandler -> ReadHandler
-- FindFilesHandler -> GlobHandler
-- SearchHandler -> GrepHandler
-- ListDirHandler -> ListHandler
-- ShellHandler -> BashHandler (restricted mode)
-- WriteOutputHandler -> WriteHandler (create-only mode)
 """
 
-# Core tools with new names
+# Core tools
 from .read import ReadHandler
 from .glob import GlobHandler
 from .grep import GrepHandler
@@ -50,32 +41,14 @@ from .postgres import PostgresHandler
 from .sqlite import SqliteHandler
 from .vertica import VerticaHandler
 
-# Backward compatibility aliases (deprecated)
-# TODO: Remove these in a future release
-ReadFileHandler = ReadHandler
-FindFilesHandler = GlobHandler
-SearchHandler = GrepHandler
-ListDirHandler = ListHandler
-WriteOutputHandler = WriteHandler
-
-
-class ShellHandler(BashHandler):
-    """Backward compatibility alias for BashHandler in restricted mode.
-
-    Deprecated: Use BashHandler(restricted=True) instead.
-    """
-
-    def __init__(self, **kwargs):
-        kwargs.setdefault("restricted", True)
-        super().__init__(**kwargs)
-
 __all__ = [
-    # New standard names
+    # Core tools
     "ReadHandler",
     "GlobHandler",
     "GrepHandler",
     "ListHandler",
     "ReadExcelHandler",
+    # Mode-dependent tools
     "BashHandler",
     "WriteHandler",
     "EditHandler",
@@ -85,11 +58,4 @@ __all__ = [
     "PostgresHandler",
     "SqliteHandler",
     "VerticaHandler",
-    # Backward compatibility (deprecated)
-    "ReadFileHandler",
-    "FindFilesHandler",
-    "SearchHandler",
-    "ListDirHandler",
-    "ShellHandler",
-    "WriteOutputHandler",
 ]

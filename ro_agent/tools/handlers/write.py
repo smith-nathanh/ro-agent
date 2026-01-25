@@ -1,7 +1,8 @@
-"""Unified file writing handler with mode support.
+"""File writing handler with configurable restrictions.
 
-Merges WriteOutputHandler (create-only, safe) and WriteFileHandler (full overwrite)
-into a single implementation with configurable mode.
+Supports two modes:
+- CREATE_ONLY: Can only create new files, blocks overwrites and sensitive paths
+- FULL: Full write access for sandboxed container environments
 """
 
 from pathlib import Path

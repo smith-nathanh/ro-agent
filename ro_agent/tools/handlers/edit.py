@@ -1,6 +1,5 @@
 """Surgical file editing using search-and-replace.
 
-Moved from harbor/edit_file.py to main handlers with standard tool name 'edit'.
 Uses a search-and-replace approach with fuzzy matching for robustness.
 """
 

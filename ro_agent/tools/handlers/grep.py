@@ -1,7 +1,4 @@
-"""Search file contents using ripgrep (rg) for efficiency.
-
-Renamed from search.py to grep.py with tool name 'grep'.
-"""
+"""Search file contents using ripgrep."""
 
 import asyncio
 import shutil

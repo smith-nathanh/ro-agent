@@ -1,8 +1,4 @@
-"""Tool factory for creating registries from capability profiles.
-
-The ToolFactory creates configured tool registries based on capability profiles,
-replacing the manual create_registry() function with a profile-driven approach.
-"""
+"""Tool factory for creating registries from capability profiles."""
 
 import os
 from pathlib import Path
