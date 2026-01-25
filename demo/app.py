@@ -13,11 +13,11 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 import pandas as pd
 import streamlit as st
 
+from ro_agent.client.model import ModelClient
 from ro_agent.core.agent import Agent, AgentEvent
 from ro_agent.core.session import Session
-from ro_agent.client.model import ModelClient
-from ro_agent.tools.registry import ToolRegistry
 from ro_agent.tools.handlers.sqlite import SqliteHandler
+from ro_agent.tools.registry import ToolRegistry
 
 # Config
 DB_PATH = Path(__file__).parent / "sample_data.db"

@@ -5,7 +5,7 @@ inside Harbor's container environment for TerminalBench evaluation.
 
 Usage in job.yaml:
     agents:
-      - import_path: ro_agent.harbor.agent:RoAgent
+      - import_path: ro_agent.eval.harbor.agent:RoAgent
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ class RoAgent(BaseAgent):
         self.logger.info("Setting up ro-agent in container...")
 
         # Find ro-agent source directory (go up from this file)
-        ro_agent_root = Path(__file__).parent.parent.parent
+        ro_agent_root = Path(__file__).parent.parent.parent.parent
         self.logger.info(f"Uploading ro-agent from {ro_agent_root}")
 
         # Upload ro-agent source to container
@@ -146,7 +146,7 @@ class RoAgent(BaseAgent):
         # Run ro-agent in the container using uv run
         # Source the .env file to get OPENAI_API_KEY, then cd to /app for task execution
         result = await environment.exec(
-            f'set -a && source /ro-agent/.env && set +a && export PATH="$HOME/.local/bin:$PATH" && cd /app && /ro-agent/.venv/bin/python -m ro_agent.harbor.runner {escaped} /app',
+            f'set -a && source /ro-agent/.env && set +a && export PATH="$HOME/.local/bin:$PATH" && cd /app && /ro-agent/.venv/bin/python -m ro_agent.eval.harbor.runner {escaped} /app',
             timeout_sec=self._agent_timeout_sec,
             env=env,
         )

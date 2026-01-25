@@ -5,7 +5,7 @@ capability profile system. The container provides sandboxing, so tool-level
 restrictions are unnecessary.
 
 Usage:
-    python -m ro_agent.harbor.runner "<instruction>" [working_dir]
+    python -m ro_agent.eval.harbor.runner "<instruction>" [working_dir]
 
 Environment variables:
     RO_AGENT_MODEL      - Model to use (default: gpt-5-mini)
@@ -29,9 +29,9 @@ from ro_agent.core.session import Session
 
 # Load .env file - try multiple locations
 # 1. Current directory
-# 2. ro-agent package root (where this file lives, up 3 levels)
+# 2. ro-agent package root (where this file lives, up 4 levels)
 # 3. /ro-agent (Harbor container mount point)
-_pkg_root = Path(__file__).parent.parent.parent
+_pkg_root = Path(__file__).parent.parent.parent.parent
 for env_path in [Path.cwd() / ".env", _pkg_root / ".env", Path("/ro-agent/.env")]:
     if env_path.exists():
         load_dotenv(env_path)
@@ -147,7 +147,7 @@ def main() -> None:
     """CLI entry point."""
     if len(sys.argv) < 2:
         print(
-            "Usage: python -m ro_agent.harbor.runner '<instruction>' [working_dir]",
+            "Usage: python -m ro_agent.eval.harbor.runner '<instruction>' [working_dir]",
             file=sys.stderr,
         )
         sys.exit(1)

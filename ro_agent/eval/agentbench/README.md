@@ -300,7 +300,7 @@ ro-eval dbbench data.jsonl --offset 100 -n 50 -o results/
 ## Architecture
 
 ```
-ro_agent/eval/
+ro_agent/eval/agentbench/
 ├── cli.py                 # Typer CLI commands
 ├── runner.py              # EvalRunner orchestrates execution
 ├── config.py              # EvalConfig, TaskResult, EvalMetrics

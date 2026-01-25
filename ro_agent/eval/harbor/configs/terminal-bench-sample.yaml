@@ -2,7 +2,7 @@
 #
 # Run with:
 #   cd ~/proj/harbor
-#   uv run harbor run --config ~/proj/ro-agent/ro_agent/harbor/job-sample.yaml
+#   uv run harbor run --config ~/proj/ro-agent/ro_agent/eval/harbor/configs/terminal-bench-sample.yaml
 
 jobs_dir: jobs
 n_attempts: 1
@@ -24,7 +24,7 @@ environment:
       read_only: true
 
 agents:
-  - import_path: ro_agent.harbor.agent:RoAgent
+  - import_path: ro_agent.eval.harbor.agent:RoAgent
     model_name: openai/gpt-5-mini
 
 datasets:

@@ -1,6 +1,6 @@
-# Harbor Integration for TerminalBench
+# Harbor Integration
 
-This directory contains the Harbor integration for running ro-agent on TerminalBench evaluations.
+This directory contains the Harbor integration for running ro-agent on Harbor benchmarks (TerminalBench and others).
 
 ## What is TerminalBench?
 
@@ -93,11 +93,13 @@ uv pip install -e ~/proj/ro-agent
 
 ### Configuration files
 
+Config files are in `configs/`:
+
 | File | Dataset | Tasks | Use case |
 |------|---------|-------|----------|
-| `job.yaml` | hello-world | 1 | Smoke test - verify setup works |
-| `job-sample.yaml` | terminal-bench-sample | 10 | Quick evaluation across task types |
-| `job-full.yaml` | terminal-bench | 89 | Full benchmark run |
+| `terminal-bench-prelim.yaml` | hello-world | 1 | Smoke test - verify setup works |
+| `terminal-bench-sample.yaml` | terminal-bench-sample | 10 | Quick evaluation across task types |
+| `terminal-bench.yaml` | terminal-bench | 89 | Full benchmark run |
 
 ### Running
 
@@ -105,13 +107,13 @@ uv pip install -e ~/proj/ro-agent
 cd ~/proj/harbor
 
 # Smoke test (1 task)
-uv run harbor run --config ~/proj/ro-agent/ro_agent/harbor/job.yaml
+uv run harbor run --config ~/proj/ro-agent/ro_agent/eval/harbor/configs/terminal-bench-prelim.yaml
 
 # Sample evaluation (10 tasks)
-uv run harbor run --config ~/proj/ro-agent/ro_agent/harbor/job-sample.yaml
+uv run harbor run --config ~/proj/ro-agent/ro_agent/eval/harbor/configs/terminal-bench-sample.yaml
 
 # Full benchmark (89 tasks)
-uv run harbor run --config ~/proj/ro-agent/ro_agent/harbor/job-full.yaml
+uv run harbor run --config ~/proj/ro-agent/ro_agent/eval/harbor/configs/terminal-bench.yaml
 ```
 
 ### Viewing results
@@ -172,9 +174,13 @@ uv run harbor view
 |------|---------|
 | `agent.py` | Harbor `BaseAgent` wrapper - handles setup and execution |
 | `runner.py` | Entry point that runs inside the container |
-| `tools/bash.py` | Unrestricted shell execution (container is sandbox) |
-| `tools/write_file.py` | File creation/overwriting |
-| `tools/edit_file.py` | Surgical file edits with fuzzy matching |
+| `configs/*.yaml` | Job configurations for different benchmarks |
+
+The agent uses ro-agent's capability profiles to configure tools. In eval mode, it has unrestricted access to:
+- `bash` - Shell execution (container provides sandboxing)
+- `write` - File creation/overwriting
+- `edit` - Surgical file edits
+- `read`, `grep`, `glob`, `list` - File inspection tools
 
 ### How ro-agent runs in Harbor
 

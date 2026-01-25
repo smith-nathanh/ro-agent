@@ -23,7 +23,7 @@ dependencies = [
 
 [project.scripts]
 ro-agent = "ro_agent.cli:app"
-ro-eval = "ro_agent.eval.cli:app"
+ro-eval = "ro_agent.eval.agentbench.cli:app"
 
 [build-system]
 requires = ["hatchling"]

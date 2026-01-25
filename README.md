@@ -202,3 +202,28 @@ Options:
   -r, --resume ID        Resume conversation
   -l, --list             List saved conversations
 ```
+
+## Evaluations
+
+ro-agent includes integrations for running LLM benchmarks:
+
+### AgentBench
+
+```bash
+# DBBench - database query tasks
+ro-eval dbbench ~/proj/AgentBench/data/dbbench/standard.jsonl
+
+# OS Interaction - Linux system tasks
+ro-eval os-interaction ~/proj/AgentBench/data/os_interaction
+```
+
+See `ro_agent/eval/agentbench/README.md` for setup and options.
+
+### Harbor / TerminalBench
+
+```bash
+cd ~/proj/harbor
+uv run harbor run --config ~/proj/ro-agent/ro_agent/eval/harbor/configs/terminal-bench-sample.yaml
+```
+
+See `ro_agent/eval/harbor/README.md` for details.

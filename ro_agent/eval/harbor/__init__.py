@@ -5,11 +5,11 @@ sandboxed container environments for TerminalBench evaluation.
 
 Usage:
     # From within a Harbor container:
-    python -m ro_agent.harbor.runner "task instruction here"
+    python -m ro_agent.eval.harbor.runner "task instruction here"
 
     # Or via Harbor job config:
     # agents:
-    #   - import_path: ro_agent.harbor.agent:RoAgent
+    #   - import_path: ro_agent.eval.harbor.agent:RoAgent
 """
 
 # Re-export handlers for convenience
