@@ -16,6 +16,7 @@ The `readonly` profile enforces system-level restrictions for safe inspection of
 - **File editing**: Write and edit tools available in developer/eval profiles
 - **Multiple database backends**: SQLite, PostgreSQL, MySQL, Oracle, Vertica—with configurable read-only or mutation access
 - **Prompt templates**: Markdown files with variable substitution for repeatable investigations
+- **Observability**: Session tracking, token usage, tool execution metrics with Streamlit dashboard
 - **Evaluation integrations**: AgentBench (DBBench, OS Interaction) and Harbor/TerminalBench
 
 ## Installation
@@ -177,6 +178,70 @@ In interactive mode:
 | `/clear` | Clear screen |
 | `exit` | Quit |
 
+## Observability
+
+Track agent sessions, token usage, and tool executions with the built-in observability system.
+
+### Enabling Telemetry
+
+Provide `--team-id` and `--project-id` to enable session tracking:
+
+```bash
+# Via CLI flags
+uv run ro-agent --team-id acme --project-id logs "analyze this error"
+
+# Via environment variables
+export RO_AGENT_TEAM_ID=acme
+export RO_AGENT_PROJECT_ID=logs
+uv run ro-agent "analyze this error"
+```
+
+### Dashboard
+
+Launch the Streamlit dashboard to view session history and analytics:
+
+```bash
+uv run ro-agent dashboard
+uv run ro-agent dashboard --port 8502  # custom port
+```
+
+The dashboard shows:
+- Session history with status, tokens, and tool calls
+- Session detail view with turn-by-turn breakdown
+- Token usage analytics by team/project
+- Tool execution statistics
+
+### What's Tracked
+
+| Metric | Description |
+|--------|-------------|
+| Sessions | Start/end time, status, model, team/project |
+| Turns | Per-turn token counts (input/output) |
+| Tool executions | Tool name, arguments, success/failure, duration |
+
+Data is stored in SQLite at `~/.config/ro-agent/telemetry.db` by default.
+
+### Configuration File
+
+For advanced configuration, create `~/.config/ro-agent/observability.yaml`:
+
+```yaml
+observability:
+  enabled: true
+  tenant:
+    team_id: acme
+    project_id: logs
+  backend:
+    type: sqlite
+    sqlite:
+      path: ~/.config/ro-agent/telemetry.db
+  capture:
+    traces: true
+    metrics: true
+    tool_arguments: true
+    tool_results: false  # can be large
+```
+
 ## Example Session
 
 ```bash
@@ -246,6 +311,11 @@ Options:
   -y, --auto-approve     Skip tool approval prompts
   -r, --resume ID        Resume conversation
   -l, --list             List saved conversations
+  --team-id ID           Team ID for observability
+  --project-id ID        Project ID for observability
+
+# Launch observability dashboard
+uv run ro-agent dashboard [--port PORT] [--db PATH]
 ```
 
 ## Evaluations
