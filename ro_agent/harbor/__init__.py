@@ -10,12 +10,32 @@ Usage:
     # Or via Harbor job config:
     # agents:
     #   - import_path: ro_agent.harbor.agent:RoAgent
+
+The harbor tools (BashHandler, WriteHandler, EditHandler) are now unified
+with the main tools module. Use the capability profile system to configure
+unrestricted mode:
+
+    from ro_agent.capabilities import CapabilityProfile
+    from ro_agent.capabilities.factory import ToolFactory
+
+    profile = CapabilityProfile.eval()
+    factory = ToolFactory(profile)
+    registry = factory.create_registry()
 """
 
-from .tools import BashHandler, EditFileHandler, WriteFileHandler
+# Re-export handlers for backward compatibility
+# These are now aliases pointing to the unified handlers with appropriate modes
+from ro_agent.tools.handlers import BashHandler, WriteHandler, EditHandler
+
+# Backward compatibility aliases
+WriteFileHandler = WriteHandler
+EditFileHandler = EditHandler
 
 __all__ = [
     "BashHandler",
-    "EditFileHandler",
+    "WriteHandler",
+    "EditHandler",
+    # Backward compatibility
     "WriteFileHandler",
+    "EditFileHandler",
 ]

@@ -20,7 +20,7 @@ SYSTEM_SCHEMAS = ("mysql", "information_schema", "performance_schema", "sys")
 
 
 class MysqlHandler(DatabaseHandler):
-    """Read-only MySQL database handler."""
+    """MySQL database handler with configurable readonly mode."""
 
     def __init__(
         self,
@@ -55,11 +55,11 @@ class MysqlHandler(DatabaseHandler):
     @property
     def description(self) -> str:
         db_info = f"{self._database}@{self._host}" if self._database else "MySQL"
+        mode_desc = "read-only" if self._readonly else "full"
         return (
             f"Query the MySQL database ({db_info}). "
             f"Use 'list_tables' to see available tables, 'describe' for table schema, "
-            f"'query' for SELECT queries, 'export_query' to export results to CSV. "
-            f"All operations are read-only."
+            f"'query' for SQL queries ({mode_desc} access), 'export_query' to export results to CSV."
         )
 
     def _get_connection(self) -> Any:
@@ -80,12 +80,13 @@ class MysqlHandler(DatabaseHandler):
                 database=self._database,
                 user=self._user,
                 password=self._password,
-                autocommit=True,  # Read-only, no transactions needed
+                autocommit=True,
             )
-            # Set session to read-only for extra safety
-            cursor = self._connection.cursor()
-            cursor.execute("SET SESSION TRANSACTION READ ONLY")
-            cursor.close()
+            # Set session to read-only mode when readonly is enabled
+            if self._readonly:
+                cursor = self._connection.cursor()
+                cursor.execute("SET SESSION TRANSACTION READ ONLY")
+                cursor.close()
 
         return self._connection
 

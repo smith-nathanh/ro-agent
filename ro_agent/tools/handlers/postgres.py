@@ -24,7 +24,7 @@ SYSTEM_SCHEMAS = ("pg_catalog", "information_schema", "pg_toast")
 
 
 class PostgresHandler(DatabaseHandler):
-    """Read-only PostgreSQL database handler."""
+    """PostgreSQL database handler with configurable readonly mode."""
 
     def __init__(
         self,
@@ -59,11 +59,11 @@ class PostgresHandler(DatabaseHandler):
     @property
     def description(self) -> str:
         db_info = f"{self._database}@{self._host}" if self._database else "PostgreSQL"
+        mode_desc = "read-only" if self._readonly else "full"
         return (
             f"Query the PostgreSQL database ({db_info}). "
             f"Use 'list_tables' to see available tables, 'describe' for table schema, "
-            f"'query' for SELECT queries, 'export_query' to export results to CSV. "
-            f"All operations are read-only."
+            f"'query' for SQL queries ({mode_desc} access), 'export_query' to export results to CSV."
         )
 
     def _get_connection(self) -> Any:
@@ -86,11 +86,12 @@ class PostgresHandler(DatabaseHandler):
                     dbname=self._database,
                     user=self._user,
                     password=self._password,
-                    autocommit=True,  # Read-only, no transactions needed
+                    autocommit=True,
                 )
-                # Set session to read-only for extra safety
-                with self._connection.cursor() as cur:
-                    cur.execute("SET default_transaction_read_only = ON")
+                # Set session to read-only when readonly mode is enabled
+                if self._readonly:
+                    with self._connection.cursor() as cur:
+                        cur.execute("SET default_transaction_read_only = ON")
             else:
                 # psycopg2 connection
                 self._connection = psycopg.connect(
@@ -100,7 +101,7 @@ class PostgresHandler(DatabaseHandler):
                     user=self._user,
                     password=self._password,
                 )
-                self._connection.set_session(readonly=True, autocommit=True)
+                self._connection.set_session(readonly=self._readonly, autocommit=True)
 
         return self._connection
 
@@ -258,3 +259,12 @@ class PostgresHandler(DatabaseHandler):
 
         cursor.close()
         return extra if extra else None
+
+    def close(self) -> None:
+        """Close the PostgreSQL database connection."""
+        if self._connection is not None:
+            try:
+                self._connection.close()
+            except Exception:
+                pass
+            self._connection = None

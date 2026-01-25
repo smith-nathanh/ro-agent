@@ -1,4 +1,7 @@
-"""Find files by name or path pattern using ripgrep."""
+"""Find files by name or path pattern using ripgrep.
+
+Renamed from find_files.py to glob.py with tool name 'glob'.
+"""
 
 import asyncio
 import shutil
@@ -11,8 +14,11 @@ DEFAULT_MAX_RESULTS = 100
 DEFAULT_TIMEOUT = 30  # seconds
 
 
-class FindFilesHandler(ToolHandler):
-    """Find files by name or path pattern using ripgrep."""
+class GlobHandler(ToolHandler):
+    """Find files by name or path pattern using ripgrep.
+
+    Standard agentic tool name: 'glob'
+    """
 
     def __init__(self, timeout: int = DEFAULT_TIMEOUT):
         self._timeout = timeout
@@ -20,7 +26,7 @@ class FindFilesHandler(ToolHandler):
 
     @property
     def name(self) -> str:
-        return "find_files"
+        return "glob"
 
     @property
     def description(self) -> str:
@@ -31,7 +37,7 @@ class FindFilesHandler(ToolHandler):
         return {
             "type": "object",
             "properties": {
-                "glob": {
+                "pattern": {
                     "type": "string",
                     "description": "Glob pattern to match file names (e.g., '*.py', '*.log', 'config.*', '**/*.yaml')",
                 },
@@ -44,7 +50,7 @@ class FindFilesHandler(ToolHandler):
                     "description": f"Maximum files to return. Defaults to {DEFAULT_MAX_RESULTS}.",
                 },
             },
-            "required": ["glob", "path"],
+            "required": ["pattern", "path"],
         }
 
     async def handle(self, invocation: ToolInvocation) -> ToolOutput:
@@ -54,12 +60,12 @@ class FindFilesHandler(ToolHandler):
                 success=False,
             )
 
-        glob_pattern = invocation.arguments.get("glob", "")
+        glob_pattern = invocation.arguments.get("pattern", "")
         path_str = invocation.arguments.get("path", "")
         max_results = invocation.arguments.get("max_results", DEFAULT_MAX_RESULTS)
 
         if not glob_pattern:
-            return ToolOutput(content="No glob pattern provided", success=False)
+            return ToolOutput(content="No pattern provided", success=False)
 
         if not path_str:
             return ToolOutput(content="No path provided", success=False)

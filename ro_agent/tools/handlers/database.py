@@ -81,14 +81,43 @@ def format_rows(columns: list[str], rows: list[tuple], max_rows: int) -> str:
 
 
 class DatabaseHandler(ToolHandler):
-    """Base class for read-only database handlers.
+    """Base class for database handlers with configurable readonly mode.
 
     Subclasses implement connection management and catalog queries
     for their specific database systems.
+
+    By default, the handler operates in readonly mode, blocking mutation queries.
+    When readonly=False (for eval/sandbox scenarios), mutations are allowed.
     """
 
-    def __init__(self, row_limit: int = DEFAULT_ROW_LIMIT) -> None:
+    def __init__(
+        self,
+        row_limit: int = DEFAULT_ROW_LIMIT,
+        readonly: bool = True,
+        requires_approval: bool = True,
+    ) -> None:
         self._row_limit = row_limit
+        self._readonly = readonly
+        self._requires_approval = requires_approval
+
+    def close(self) -> None:
+        """Close the database connection. Override in subclasses."""
+        pass
+
+    def __enter__(self) -> "DatabaseHandler":
+        """Context manager entry - returns self."""
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Context manager exit - ensures connection is closed."""
+        self.close()
+
+    def __del__(self) -> None:
+        """Destructor - safety net to close connection on garbage collection."""
+        try:
+            self.close()
+        except Exception:
+            pass  # Ignore errors during cleanup
 
     @property
     @abstractmethod
@@ -102,15 +131,16 @@ class DatabaseHandler(ToolHandler):
 
     @property
     def requires_approval(self) -> bool:
-        return True
+        return self._requires_approval
 
     @property
     def description(self) -> str:
+        mode_desc = "read-only" if self._readonly else "full"
         return (
-            f"Query a {self.db_type.title()} database for schema inspection and read-only data access. "
+            f"Query a {self.db_type.title()} database for schema inspection and {mode_desc} data access. "
             f"Use 'query' for SQL queries, 'list_tables' to find tables, "
-            f"'describe' for detailed table schema, 'export_query' to export query results to CSV. "
-            f"All operations are read-only."
+            f"'describe' for detailed table schema, 'export_query' to export query results to CSV."
+            + (" All operations are read-only." if self._readonly else "")
         )
 
     @property
@@ -238,14 +268,16 @@ class DatabaseHandler(ToolHandler):
     async def _handle_query(
         self, invocation: ToolInvocation, row_limit: int
     ) -> ToolOutput:
-        """Execute a read-only SQL query."""
+        """Execute a SQL query (readonly mode blocks mutations)."""
         sql = invocation.arguments.get("sql", "")
         if not sql:
             return ToolOutput(content="No SQL query provided", success=False)
 
-        is_safe, reason = is_read_only_sql(sql)
-        if not is_safe:
-            return ToolOutput(content=f"Query blocked: {reason}", success=False)
+        # Only check for mutations in readonly mode
+        if self._readonly:
+            is_safe, reason = is_read_only_sql(sql)
+            if not is_safe:
+                return ToolOutput(content=f"Query blocked: {reason}", success=False)
 
         columns, rows = self._execute_query(sql)
 
@@ -358,10 +390,11 @@ class DatabaseHandler(ToolHandler):
                 success=False,
             )
 
-        # Validate SQL is read-only
-        is_safe, reason = is_read_only_sql(sql)
-        if not is_safe:
-            return ToolOutput(content=f"Query blocked: {reason}", success=False)
+        # Validate SQL is read-only (only in readonly mode)
+        if self._readonly:
+            is_safe, reason = is_read_only_sql(sql)
+            if not is_safe:
+                return ToolOutput(content=f"Query blocked: {reason}", success=False)
 
         try:
             # Create parent directories if needed

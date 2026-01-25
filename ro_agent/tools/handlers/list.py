@@ -1,4 +1,7 @@
-"""List directory contents handler."""
+"""List directory contents handler.
+
+Renamed from list_dir.py to list.py with tool name 'list'.
+"""
 
 import os
 import stat
@@ -12,12 +15,15 @@ from ..base import ToolHandler, ToolInvocation, ToolOutput
 DEFAULT_MAX_ENTRIES = 200
 
 
-class ListDirHandler(ToolHandler):
-    """List contents of a directory."""
+class ListHandler(ToolHandler):
+    """List contents of a directory.
+
+    Standard agentic tool name: 'list'
+    """
 
     @property
     def name(self) -> str:
-        return "list_dir"
+        return "list"
 
     @property
     def description(self) -> str:

@@ -34,18 +34,8 @@ from .core.agent import Agent, AgentEvent
 from .core.conversations import ConversationStore
 from .core.session import Session
 from .prompts import load_prompt, parse_vars, prepare_prompt
-from .tools.handlers import (
-    FindFilesHandler,
-    ListDirHandler,
-    OracleHandler,
-    ReadExcelHandler,
-    ReadFileHandler,
-    SearchHandler,
-    ShellHandler,
-    SqliteHandler,
-    VerticaHandler,
-    WriteOutputHandler,
-)
+from .capabilities import CapabilityProfile, ShellMode, FileWriteMode
+from .capabilities.factory import ToolFactory, load_profile
 from .tools.registry import ToolRegistry
 
 # Config directory for ro-agent data
@@ -189,29 +179,24 @@ def create_completer(working_dir: str | None = None) -> Completer:
     return merge_completers([command_completer, path_completer])
 
 
-def create_registry(working_dir: str | None = None) -> ToolRegistry:
-    """Create and configure the tool registry."""
-    registry = ToolRegistry()
-    # Dedicated read-only tools (preferred for inspection)
-    registry.register(ReadFileHandler())
-    registry.register(ReadExcelHandler())
-    registry.register(ListDirHandler())
-    registry.register(FindFilesHandler())
-    registry.register(SearchHandler())
-    # Shell for commands that need it (jq, custom tools, etc.)
-    registry.register(ShellHandler(working_dir=working_dir))
-    # Output tool for exporting findings
-    registry.register(WriteOutputHandler())
+def create_registry(
+    working_dir: str | None = None,
+    profile: CapabilityProfile | None = None,
+) -> ToolRegistry:
+    """Create and configure the tool registry.
 
-    # Database handlers - register if configured via env vars
-    if os.environ.get("ORACLE_DSN"):
-        registry.register(OracleHandler())
-    if os.environ.get("SQLITE_DB"):
-        registry.register(SqliteHandler())
-    if os.environ.get("VERTICA_HOST"):
-        registry.register(VerticaHandler())
+    Args:
+        working_dir: Working directory for shell commands.
+        profile: Capability profile to use. Defaults to readonly profile.
 
-    return registry
+    Returns:
+        Configured tool registry.
+    """
+    if profile is None:
+        profile = CapabilityProfile.readonly()
+
+    factory = ToolFactory(profile)
+    return factory.create_registry(working_dir=working_dir)
 
 
 class ApprovalHandler:
@@ -242,13 +227,13 @@ class ApprovalHandler:
 
 
 def _format_tool_signature(tool_name: str, tool_args: dict[str, Any] | None) -> str:
-    """Format tool call as a signature like: read_file(path='/foo/bar.py')"""
+    """Format tool call as a signature like: read(path='/foo/bar.py')"""
     if not tool_args:
         return f"{tool_name}()"
 
-    # For shell commands, show just the command
-    if tool_name == "shell" and "command" in tool_args:
-        return f"shell({tool_args['command']})"
+    # For shell/bash commands, show just the command
+    if tool_name in ("shell", "bash") and "command" in tool_args:
+        return f"{tool_name}({tool_args['command']})"
 
     # For other tools, show all args (no truncation)
     parts = []
@@ -272,7 +257,8 @@ def _format_tool_summary(
 
     # Use metadata if available
     if metadata:
-        if tool_name == "search":
+        # Search/grep tools
+        if tool_name in ("search", "grep"):
             matches = metadata.get("matches", 0)
             truncated = metadata.get("truncated", False)
             if matches:
@@ -280,26 +266,39 @@ def _format_tool_summary(
                 return f"{matches}{suffix} matches"
             return "No matches"
 
-        if tool_name == "read_file":
+        # Read file tools
+        if tool_name in ("read_file", "read"):
             total = metadata.get("total_lines", 0)
             start = metadata.get("start_line", 1)
             end = metadata.get("end_line", total)
             if total:
                 return f"Read lines {start}-{end} of {total}"
 
-        if tool_name == "list_dir":
+        # List directory tools
+        if tool_name in ("list_dir", "list"):
             count = metadata.get("item_count", 0)
             if count:
                 return f"{count} items"
 
-        if tool_name == "write_output":
+        # Write tools
+        if tool_name in ("write_output", "write"):
             size = metadata.get("size_bytes", 0)
             lines = metadata.get("lines", 0)
-            path = metadata.get("path", "")
             if size:
                 return f"Wrote {size} bytes ({lines} lines)"
 
-        if tool_name in ("oracle", "sqlite", "vertica"):
+        # Glob/find tools
+        if tool_name in ("find_files", "glob"):
+            matches = metadata.get("matches", 0)
+            total = metadata.get("total", matches)
+            if matches:
+                if total > matches:
+                    return f"{matches} of {total} files"
+                return f"{matches} files"
+            return "No files found"
+
+        # Database tools
+        if tool_name in ("oracle", "sqlite", "vertica", "mysql", "postgres"):
             rows = metadata.get("row_count", metadata.get("table_count", 0))
             if rows:
                 return f"{rows} rows"
@@ -701,6 +700,27 @@ def main(
             "--preview-lines", help="Lines of tool output to show (0 to disable)"
         ),
     ] = int(os.getenv("RO_AGENT_PREVIEW_LINES", "6")),
+    profile: Annotated[
+        Optional[str],
+        typer.Option(
+            "--profile",
+            help="Capability profile: 'readonly' (default), 'developer', 'eval', or path to YAML",
+        ),
+    ] = os.getenv("RO_AGENT_PROFILE"),
+    shell_mode: Annotated[
+        Optional[str],
+        typer.Option(
+            "--shell-mode",
+            help="Override shell mode: 'restricted' or 'unrestricted'",
+        ),
+    ] = None,
+    file_write_mode: Annotated[
+        Optional[str],
+        typer.Option(
+            "--file-write-mode",
+            help="Override file write mode: 'off', 'create-only', or 'full'",
+        ),
+    ] = None,
 ) -> None:
     """ro-agent: A read-only research assistant."""
     # Set preview lines for tool output display
@@ -857,7 +877,32 @@ def main(
         session = Session(system_prompt=system_prompt)
         effective_model = model
 
-    registry = create_registry(working_dir=resolved_working_dir)
+    # Load capability profile
+    if profile:
+        try:
+            capability_profile = load_profile(profile)
+        except (ValueError, FileNotFoundError) as e:
+            console.print(f"[red]Profile error: {e}[/red]")
+            raise typer.Exit(1) from e
+    else:
+        capability_profile = CapabilityProfile.readonly()
+
+    # Apply command-line overrides
+    if shell_mode:
+        try:
+            capability_profile.shell = ShellMode(shell_mode)
+        except ValueError:
+            console.print(f"[red]Invalid shell mode: {shell_mode}. Use 'restricted' or 'unrestricted'[/red]")
+            raise typer.Exit(1)
+
+    if file_write_mode:
+        try:
+            capability_profile.file_write = FileWriteMode(file_write_mode)
+        except ValueError:
+            console.print(f"[red]Invalid file write mode: {file_write_mode}. Use 'off', 'create-only', or 'full'[/red]")
+            raise typer.Exit(1)
+
+    registry = create_registry(working_dir=resolved_working_dir, profile=capability_profile)
     client = ModelClient(model=effective_model, base_url=base_url)
     approval_handler = ApprovalHandler(auto_approve=auto_approve)
 
