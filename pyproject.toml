@@ -34,6 +34,22 @@ build-backend = "hatchling.build"
 # Install harbor from: https://github.com/laude-institute/harbor
 harbor = []  # Harbor is installed separately via pip install -e ~/proj/harbor
 
+# Observability dependencies
+observability = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+]
+
+# Optional: OTLP export to external backends (Jaeger, Datadog, etc.)
+otlp = [
+    "opentelemetry-exporter-otlp>=1.20.0",
+]
+
+# Optional: Redis for real-time session tracking
+redis = [
+    "redis>=5.0.0",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",

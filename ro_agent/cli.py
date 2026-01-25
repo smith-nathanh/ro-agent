@@ -37,6 +37,9 @@ from .prompts import load_prompt, parse_vars, prepare_prompt
 from .capabilities import CapabilityProfile, ShellMode, FileWriteMode
 from .capabilities.factory import ToolFactory, load_profile
 from .tools.registry import ToolRegistry
+from .observability.config import ObservabilityConfig, DEFAULT_TELEMETRY_DB
+from .observability.processor import ObservabilityProcessor, create_processor
+from .observability.context import TelemetryContext
 
 # Config directory for ro-agent data
 CONFIG_DIR = Path.home() / ".config" / "ro-agent"
@@ -450,10 +453,15 @@ async def run_interactive(
     conversation_store: ConversationStore,
     session_started: datetime,
     conversation_id: str | None = None,
+    observability: ObservabilityProcessor | None = None,
 ) -> None:
     """Run an interactive REPL session."""
     # Ensure config directory exists
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Start observability session if enabled
+    if observability:
+        await observability.start_session()
 
     key_bindings = KeyBindings()
 
@@ -476,91 +484,114 @@ async def run_interactive(
     )
 
     # Welcome message
+    obs_status = "[green]telemetry enabled[/green]" if observability else ""
     console.print(
         Panel(
             "[bold]ro-agent[/bold] - Read-only research assistant\n"
-            f"Model: [cyan]{model}[/cyan]\n"
+            f"Model: [cyan]{model}[/cyan] {obs_status}\n"
             "Enter to send, Esc+Enter for newline, Ctrl+C to cancel.\n"
             "Type [bold]/help[/bold] for commands, [bold]exit[/bold] to quit.",
             border_style="green",
         )
     )
 
-    while True:
-        try:
-            console.print()
-            user_input = await prompt_session.prompt_async(
-                HTML("<ansigreen><b>&gt;</b></ansigreen> ")
-            )
-            user_input = user_input.strip()
-        except (EOFError, KeyboardInterrupt):
-            break
-
-        if not user_input:
-            continue
-
-        if user_input.lower() in ("exit", "quit"):
-            break
-
-        if user_input.startswith("/"):
-            action = handle_command(user_input, approval_handler)
-            if action and action.startswith("compact"):
-                # Handle /compact command
-                instructions = ""
-                if ":" in action:
-                    instructions = action.split(":", 1)[1]
-                handle_event(AgentEvent(type="compact_start", content="manual"))
-                result = await agent.compact(
-                    custom_instructions=instructions, trigger="manual"
+    session_status = "completed"
+    try:
+        while True:
+            try:
+                console.print()
+                user_input = await prompt_session.prompt_async(
+                    HTML("<ansigreen><b>&gt;</b></ansigreen> ")
                 )
-                handle_event(
-                    AgentEvent(
-                        type="compact_end",
-                        content=f"Compacted: {result.tokens_before} → {result.tokens_after} tokens",
+                user_input = user_input.strip()
+            except (EOFError, KeyboardInterrupt):
+                break
+
+            if not user_input:
+                continue
+
+            if user_input.lower() in ("exit", "quit"):
+                break
+
+            if user_input.startswith("/"):
+                action = handle_command(user_input, approval_handler)
+                if action and action.startswith("compact"):
+                    # Handle /compact command
+                    instructions = ""
+                    if ":" in action:
+                        instructions = action.split(":", 1)[1]
+                    handle_event(AgentEvent(type="compact_start", content="manual"))
+                    result = await agent.compact(
+                        custom_instructions=instructions, trigger="manual"
                     )
-                )
-            continue
+                    handle_event(
+                        AgentEvent(
+                            type="compact_end",
+                            content=f"Compacted: {result.tokens_before} → {result.tokens_after} tokens",
+                        )
+                    )
+                continue
 
-        # Run the turn and handle events with cancellation support
-        loop = asyncio.get_event_loop()
+            # Run the turn and handle events with cancellation support
+            loop = asyncio.get_event_loop()
 
-        def on_cancel():
-            console.print("\n[yellow]Cancelling...[/yellow]")
-            agent.request_cancel()
+            def on_cancel():
+                console.print("\n[yellow]Cancelling...[/yellow]")
+                agent.request_cancel()
 
-        # Register signal handler for this turn (Unix only)
-        if platform.system() != "Windows":
-            loop.add_signal_handler(signal.SIGINT, on_cancel)
-
-        try:
-            async for event in agent.run_turn(user_input):
-                if event.type == "cancelled":
-                    console.print("[dim]Turn cancelled[/dim]")
-                    break
-                handle_event(event)
-        finally:
-            # Remove signal handler after turn
+            # Register signal handler for this turn (Unix only)
             if platform.system() != "Windows":
-                loop.remove_signal_handler(signal.SIGINT)
+                loop.add_signal_handler(signal.SIGINT, on_cancel)
 
-    # Save conversation on exit (only if there's history)
-    if session.history:
-        saved_path = conversation_store.save(
-            model=model,
-            system_prompt=session.system_prompt,
-            history=session.history,
-            input_tokens=session.total_input_tokens,
-            output_tokens=session.total_output_tokens,
-            started=session_started,
-            conversation_id=conversation_id,
-        )
-        console.print(f"\n[dim]Goodbye! Conversation saved to {saved_path}[/dim]")
-    else:
-        console.print("\n[dim]Goodbye![/dim]")
+            try:
+                # Wrap event stream with observability if enabled
+                events = agent.run_turn(user_input)
+                if observability:
+                    events = observability.wrap_turn(events, user_input)
+
+                async for event in events:
+                    if event.type == "cancelled":
+                        console.print("[dim]Turn cancelled[/dim]")
+                        break
+                    handle_event(event)
+            finally:
+                # Remove signal handler after turn
+                if platform.system() != "Windows":
+                    loop.remove_signal_handler(signal.SIGINT)
+    except Exception:
+        session_status = "error"
+        raise
+    finally:
+        # End observability session
+        if observability:
+            await observability.end_session(session_status)
+
+        # Save conversation on exit (only if there's history)
+        if session.history:
+            saved_path = conversation_store.save(
+                model=model,
+                system_prompt=session.system_prompt,
+                history=session.history,
+                input_tokens=session.total_input_tokens,
+                output_tokens=session.total_output_tokens,
+                started=session_started,
+                conversation_id=conversation_id,
+            )
+            console.print(f"\n[dim]Goodbye! Conversation saved to {saved_path}[/dim]")
+        else:
+            console.print("\n[dim]Goodbye![/dim]")
 
 
-async def run_single(agent: Agent, prompt: str) -> None:
+async def run_single(
+    agent: Agent,
+    prompt: str,
+    observability: ObservabilityProcessor | None = None,
+) -> None:
     """Run a single prompt and exit."""
+    # Start observability session if enabled
+    if observability:
+        await observability.start_session()
+
     loop = asyncio.get_event_loop()
 
     def on_cancel():
@@ -570,18 +601,34 @@ async def run_single(agent: Agent, prompt: str) -> None:
     if platform.system() != "Windows":
         loop.add_signal_handler(signal.SIGINT, on_cancel)
 
+    session_status = "completed"
     try:
-        async for event in agent.run_turn(prompt):
+        # Wrap event stream with observability if enabled
+        events = agent.run_turn(prompt)
+        if observability:
+            events = observability.wrap_turn(events, prompt)
+
+        async for event in events:
             if event.type == "cancelled":
                 console.print("[dim]Cancelled[/dim]")
                 break
             handle_event(event)
+    except Exception:
+        session_status = "error"
+        raise
     finally:
         if platform.system() != "Windows":
             loop.remove_signal_handler(signal.SIGINT)
+        if observability:
+            await observability.end_session(session_status)
 
 
-async def run_single_with_output(agent: Agent, prompt: str, output_path: str) -> bool:
+async def run_single_with_output(
+    agent: Agent,
+    prompt: str,
+    output_path: str,
+    observability: ObservabilityProcessor | None = None,
+) -> bool:
     """Run a single prompt and write final response to file.
 
     Returns True if successful, False if output file already exists.
@@ -596,6 +643,10 @@ async def run_single_with_output(agent: Agent, prompt: str, output_path: str) ->
         )
         return False
 
+    # Start observability session if enabled
+    if observability:
+        await observability.start_session()
+
     collected_text: list[str] = []
     cancelled = False
 
@@ -608,8 +659,14 @@ async def run_single_with_output(agent: Agent, prompt: str, output_path: str) ->
     if platform.system() != "Windows":
         loop.add_signal_handler(signal.SIGINT, on_cancel)
 
+    session_status = "completed"
     try:
-        async for event in agent.run_turn(prompt):
+        # Wrap event stream with observability if enabled
+        events = agent.run_turn(prompt)
+        if observability:
+            events = observability.wrap_turn(events, prompt)
+
+        async for event in events:
             if event.type == "cancelled":
                 console.print("[dim]Cancelled[/dim]")
                 cancelled = True
@@ -618,9 +675,14 @@ async def run_single_with_output(agent: Agent, prompt: str, output_path: str) ->
             # Collect text for output file
             if event.type == "text" and event.content:
                 collected_text.append(event.content)
+    except Exception:
+        session_status = "error"
+        raise
     finally:
         if platform.system() != "Windows":
             loop.remove_signal_handler(signal.SIGINT)
+        if observability:
+            await observability.end_session(session_status)
 
     if cancelled:
         return False
@@ -721,6 +783,27 @@ def main(
             help="Override file write mode: 'off', 'create-only', or 'full'",
         ),
     ] = None,
+    team_id: Annotated[
+        Optional[str],
+        typer.Option(
+            "--team-id",
+            help="Team ID for observability (enables telemetry)",
+        ),
+    ] = os.getenv("RO_AGENT_TEAM_ID"),
+    project_id: Annotated[
+        Optional[str],
+        typer.Option(
+            "--project-id",
+            help="Project ID for observability (enables telemetry)",
+        ),
+    ] = os.getenv("RO_AGENT_PROJECT_ID"),
+    observability_config: Annotated[
+        Optional[str],
+        typer.Option(
+            "--observability-config",
+            help="Path to observability config file",
+        ),
+    ] = os.getenv("RO_AGENT_OBSERVABILITY_CONFIG"),
 ) -> None:
     """ro-agent: A read-only research assistant."""
     # Set preview lines for tool output display
@@ -913,6 +996,29 @@ def main(
         approval_callback=approval_handler.check_approval,
     )
 
+    # Create observability processor if team_id and project_id provided
+    observability_processor: ObservabilityProcessor | None = None
+    if team_id and project_id:
+        try:
+            obs_config = ObservabilityConfig.load(
+                config_path=observability_config,
+                team_id=team_id,
+                project_id=project_id,
+            )
+            if obs_config.enabled and obs_config.tenant:
+                from .observability.context import TelemetryContext
+                context = TelemetryContext.from_config(
+                    obs_config,
+                    model=effective_model,
+                    profile=capability_profile.name if hasattr(capability_profile, 'name') else str(capability_profile.shell.value),
+                )
+                observability_processor = ObservabilityProcessor(obs_config, context)
+                console.print(
+                    f"[dim]Telemetry: {obs_config.tenant.team_id}/{obs_config.tenant.project_id}[/dim]"
+                )
+        except Exception as e:
+            console.print(f"[yellow]Warning: Failed to initialize observability: {e}[/yellow]")
+
     # Determine the prompt to run
     # Positional prompt overrides template's initial_prompt
     run_prompt = prompt if prompt else initial_prompt
@@ -921,9 +1027,9 @@ def main(
         # Single prompt mode (from --prompt or positional arg)
         if output:
             # Capture output to file
-            asyncio.run(run_single_with_output(agent, run_prompt, output))
+            asyncio.run(run_single_with_output(agent, run_prompt, output, observability_processor))
         else:
-            asyncio.run(run_single(agent, run_prompt))
+            asyncio.run(run_single(agent, run_prompt, observability_processor))
     else:
         asyncio.run(
             run_interactive(
@@ -935,8 +1041,58 @@ def main(
                 conversation_store,
                 session_started,
                 conversation_id,
+                observability_processor,
             )
         )
+
+
+@app.command()
+def dashboard(
+    db_path: Annotated[
+        Optional[str],
+        typer.Option("--db", help="Path to telemetry database"),
+    ] = None,
+    port: Annotated[
+        int,
+        typer.Option("--port", "-p", help="Port to run dashboard on"),
+    ] = 8501,
+) -> None:
+    """Launch the observability dashboard."""
+    import subprocess
+    import sys
+
+    # Set database path in environment
+    resolved_db = db_path or str(DEFAULT_TELEMETRY_DB)
+    env = os.environ.copy()
+    env["RO_AGENT_TELEMETRY_DB"] = resolved_db
+
+    # Get path to dashboard app
+    dashboard_path = Path(__file__).parent / "observability" / "dashboard" / "app.py"
+
+    if not dashboard_path.exists():
+        console.print(f"[red]Dashboard app not found at {dashboard_path}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]Starting dashboard on port {port}...[/green]")
+    console.print(f"[dim]Database: {resolved_db}[/dim]")
+    console.print(f"[dim]Open http://localhost:{port} in your browser[/dim]")
+
+    try:
+        subprocess.run(
+            [
+                sys.executable, "-m", "streamlit", "run",
+                str(dashboard_path),
+                "--server.port", str(port),
+                "--server.headless", "true",
+            ],
+            env=env,
+            check=True,
+        )
+    except KeyboardInterrupt:
+        console.print("\n[dim]Dashboard stopped[/dim]")
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]Dashboard failed to start: {e}[/red]")
+        raise typer.Exit(1) from e
 
 
 if __name__ == "__main__":
