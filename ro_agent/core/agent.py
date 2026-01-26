@@ -42,12 +42,19 @@ CompactCallback = Callable[[str], Awaitable[None]]
 
 
 def truncate_output(content: str, max_chars: int = MAX_TOOL_OUTPUT_CHARS) -> str:
-    """Truncate tool output to prevent context overflow."""
+    """Truncate tool output to prevent context overflow.
+
+    Uses head+tail strategy: keeps the first half and last half of the
+    budget, so error messages at the end of output are preserved.
+    """
     if len(content) <= max_chars:
         return content
+    half = max_chars // 2
+    elided = len(content) - max_chars
     return (
-        content[:max_chars]
-        + f"\n\n... (truncated, showing {max_chars} of {len(content)} chars)"
+        content[:half]
+        + f"\n\n[... {elided} chars elided ...]\n\n"
+        + content[-half:]
     )
 
 

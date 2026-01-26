@@ -126,7 +126,8 @@ class RoAgent(BaseAgent):
 
         # Build environment variables
         # Strip provider prefix from model name (e.g., "openai/gpt-5-mini" -> "gpt-5-mini")
-        model = self.model_name or os.environ.get("RO_AGENT_MODEL", "gpt-5-mini")
+        # Env var overrides config so you can switch models without editing YAML
+        model = os.environ.get("RO_AGENT_MODEL") or self.model_name or "gpt-5-mini"
         if "/" in model:
             model = model.split("/", 1)[1]
 

@@ -330,7 +330,7 @@ The client handles:
 
 | Constant | Value | Location |
 |----------|-------|----------|
-| Tool output truncation | 20,000 chars | `agent.py:14` |
+| Tool output truncation | 20,000 chars (head+tail) | `agent.py:14` |
 | Context limit | 100,000 tokens | `agent.py:17` |
 | Auto-compact threshold | 80% | `agent.py:18` |
 | Bash timeout (restricted) | 120 seconds | `bash.py:14` |

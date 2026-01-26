@@ -25,9 +25,11 @@ environment:
 
 agents:
   - import_path: ro_agent.eval.harbor.agent:RoAgent
-    model_name: openai/gpt-5-mini
+    model_name: openai/gpt-5.2
 
 datasets:
   - name: terminal-bench-sample
     version: "2.0"
     registry: {}
+    exclude_task_names:
+      - "qemu-*"  # QEMU tasks fail on ARM Macs (Rosetta can't emulate nested x86 VMs)

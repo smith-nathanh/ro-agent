@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, APIStatusError
 
 
 @dataclass
@@ -64,7 +64,9 @@ class ModelClient:
         # For flex processing, use longer timeout (15 min) per OpenAI docs
         if timeout is None:
             timeout = 900.0 if service_tier == "flex" else 60.0
-        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
+        self._client = AsyncOpenAI(
+            base_url=base_url, api_key=api_key, timeout=timeout, max_retries=8,
+        )
         self._model = model
         self._service_tier = service_tier
         self._base_url = base_url or ""
@@ -178,6 +180,11 @@ class ModelClient:
                             )
                         tool_calls_in_progress.clear()
 
+        except APIStatusError as e:
+            yield StreamEvent(
+                type="error",
+                content=f"API error {e.status_code} (after retries): {e.message}",
+            )
         except Exception as e:
             yield StreamEvent(type="error", content=str(e))
 
@@ -232,6 +239,11 @@ class ModelClient:
             }
             yield StreamEvent(type="done", usage=usage)
 
+        except APIStatusError as e:
+            yield StreamEvent(
+                type="error",
+                content=f"API error {e.status_code} (after retries): {e.message}",
+            )
         except Exception as e:
             yield StreamEvent(type="error", content=str(e))
 
@@ -260,5 +272,10 @@ class ModelClient:
                 else 0,
             }
             return content, usage
+        except APIStatusError as e:
+            return (
+                f"API error {e.status_code} (after retries): {e.message}",
+                {"input_tokens": 0, "output_tokens": 0},
+            )
         except Exception as e:
             return f"Error: {e}", {"input_tokens": 0, "output_tokens": 0}

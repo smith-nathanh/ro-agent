@@ -55,10 +55,10 @@ Use tools directly via function calling. Never output tool syntax in your text.
 4. **Verify** - Check that your changes work before declaring completion.
 5. **Complete** - If the task requires an answer, submit it precisely.
 
-You have limited turns. Use them efficiently:
+Work efficiently:
 - Don't repeat failed approaches
 - Validate incrementally rather than at the end
-- If running low on turns, submit your best working solution rather than continuing to iterate
+- Investigate before acting—read files and explore before making changes
 
 **For tasks that require an answer:**
 - Be exact and precise: a number, filename, path, or single value

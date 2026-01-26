@@ -39,7 +39,7 @@ for env_path in [Path.cwd() / ".env", _pkg_root / ".env", Path("/ro-agent/.env")
         load_dotenv(env_path)
         break
 
-_EVAL_PROMPT = Path(__file__).parent.parent.parent / "prompts" / "eval.md"
+_EVAL_PROMPT = Path(__file__).parent.parent.parent / "prompts" / "eval_terminal.md"
 
 
 async def auto_approve(tool_name: str, tool_args: dict) -> bool:
