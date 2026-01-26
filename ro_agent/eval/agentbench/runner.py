@@ -120,6 +120,12 @@ class EvalRunner:
         self._os_evaluator = OSEvaluator(scripts_dir=scripts_dir)
         self._mysql_container: MySQLContainer | None = None
 
+        # Log client type once at init
+        if self._is_cerebras():
+            print(f"[DEBUG] Using CerebrasClient for model={config.model}", file=sys.stderr)
+        else:
+            print(f"[DEBUG] Using ModelClient for model={config.model} base_url={config.base_url}", file=sys.stderr)
+
     async def _ensure_mysql(self) -> MySQLContainer:
         """Lazily start MySQL container on first use."""
         if self._mysql_container is None:
@@ -145,9 +151,7 @@ class EvalRunner:
         otherwise uses the standard OpenAI-compatible ModelClient.
         """
         if self._is_cerebras():
-            print(f"[DEBUG] Using CerebrasClient for model={self.config.model}", file=sys.stderr)
             return CerebrasClient(model=self.config.model)
-        print(f"[DEBUG] Using ModelClient for model={self.config.model} base_url={self.config.base_url}", file=sys.stderr)
         return ModelClient(
             model=self.config.model,
             base_url=self.config.base_url,

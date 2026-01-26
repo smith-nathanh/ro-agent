@@ -10,7 +10,6 @@ Usage:
 Environment variables:
     RO_AGENT_MODEL        - Model to use (default: gpt-5-mini)
     RO_AGENT_BASE_URL     - API base URL (default: OpenAI)
-    RO_AGENT_MAX_TURNS    - Max conversation turns (default: 50)
     RO_AGENT_SERVICE_TIER - OpenAI service tier: "flex" for lower cost (default: None)
     OPENAI_API_KEY        - API key (required)
 """
@@ -27,6 +26,7 @@ from ro_agent.capabilities.factory import ToolFactory
 from ro_agent.client.model import ModelClient
 from ro_agent.core.agent import Agent
 from ro_agent.core.session import Session
+from ro_agent.observability import ObservabilityConfig, CaptureConfig, TenantConfig, create_processor
 from ro_agent.prompts import load_prompt, prepare_prompt
 
 # Load .env file - try multiple locations
@@ -90,22 +90,33 @@ async def run_task(instruction: str, working_dir: str = "/app") -> None:
         auto_compact=True,
     )
 
-    # Run until completion or max turns
-    max_turns = int(os.environ.get("RO_AGENT_MAX_TURNS", "50"))
-    current_input = instruction
+    # Set up observability to capture full tool traces to SQLite
+    telemetry_db = os.environ.get("RO_AGENT_TELEMETRY_DB", "/tmp/telemetry.db")
+    obs_config = ObservabilityConfig(
+        enabled=True,
+        tenant=TenantConfig(team_id="eval", project_id="harbor"),
+        capture=CaptureConfig(tool_arguments=True, tool_results=True),
+    )
+    obs_config.backend.sqlite.path = telemetry_db
+    processor = create_processor(config=obs_config, model=model, profile="eval")
 
-    for turn in range(max_turns):
-        has_tool_calls = False
+    # run_turn handles the full tool loop internally:
+    # model → tool → model → tool → ... → text-only response → done.
+    # The model stops calling tools when it's finished, then the
+    # runner exits and Harbor runs verification.
+    if processor:
+        await processor.start_session()
+    try:
+        events = agent.run_turn(instruction)
+        if processor:
+            events = processor.wrap_turn(events, instruction)
 
-        async for event in agent.run_turn(current_input):
+        async for event in events:
             if event.type == "text" and event.content:
                 print(event.content, end="", flush=True)
             elif event.type == "tool_start":
-                # Log tool invocations for debugging
                 print(f"\n[Tool: {event.tool_name}]", file=sys.stderr)
             elif event.type == "tool_end":
-                has_tool_calls = True
-                # Optionally log tool results
                 if os.environ.get("RO_AGENT_DEBUG"):
                     result_preview = (
                         event.tool_result[:200] + "..."
@@ -116,20 +127,15 @@ async def run_task(instruction: str, working_dir: str = "/app") -> None:
             elif event.type == "error":
                 print(f"\nError: {event.content}", file=sys.stderr)
             elif event.type == "turn_complete":
-                # Log usage stats
                 if event.usage:
                     print(
                         f"\n[Tokens: in={event.usage.get('total_input_tokens', 0)}, "
                         f"out={event.usage.get('total_output_tokens', 0)}]",
                         file=sys.stderr,
                     )
-
-        # If no tool calls were made, agent is done
-        if not has_tool_calls:
-            break
-
-        # Continue with empty prompt (agent has context)
-        current_input = "Continue with the task."
+    finally:
+        if processor:
+            await processor.end_session()
 
     print()  # Final newline
 

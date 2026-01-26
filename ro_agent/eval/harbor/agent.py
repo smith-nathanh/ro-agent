@@ -130,10 +130,11 @@ class RoAgent(BaseAgent):
         if "/" in model:
             model = model.split("/", 1)[1]
 
+        telemetry_db = "/tmp/telemetry.db"
         env = {
             "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", ""),
             "RO_AGENT_MODEL": model,
-            "RO_AGENT_MAX_TURNS": os.environ.get("RO_AGENT_MAX_TURNS", "50"),
+            "RO_AGENT_TELEMETRY_DB": telemetry_db,
         }
 
         # Add base URL if configured
@@ -154,28 +155,60 @@ class RoAgent(BaseAgent):
             timeout = max(timeout, 1800)  # at least 30 min for flex
 
         # Run ro-agent in the container using uv run
-        # Source the .env file to get OPENAI_API_KEY, then cd to /app for task execution
-        result = await environment.exec(
-            f'set -a && source /ro-agent/.env && set +a && export PATH="$HOME/.local/bin:$PATH" && cd /app && /ro-agent/.venv/bin/python -m ro_agent.eval.harbor.runner {escaped} /app',
-            timeout_sec=timeout,
-            env=env,
+        # Tee stdout/stderr to files in the container so we can retrieve them
+        # even if the command times out (environment.exec raises on timeout
+        # before returning result, so we'd lose all output otherwise).
+        cmd = (
+            f'set -a && source /ro-agent/.env && set +a && '
+            f'export PATH="$HOME/.local/bin:$PATH" && '
+            f'cd /app && '
+            f'/ro-agent/.venv/bin/python -m ro_agent.eval.harbor.runner {escaped} /app '
+            f'> >(tee /tmp/agent_stdout.txt) 2> >(tee /tmp/agent_stderr.txt >&2)'
         )
+        stdout = ""
+        stderr = ""
+        try:
+            result = await environment.exec(
+                f"bash -c {shlex.quote(cmd)}",
+                timeout_sec=timeout,
+                env=env,
+            )
+            stdout = result.stdout or ""
+            stderr = result.stderr or ""
+        except Exception:
+            # Timeout or other error - retrieve output from container files
+            self.logger.warning("Agent exec failed, retrieving output from container...")
+            try:
+                out = await environment.exec("cat /tmp/agent_stdout.txt", timeout_sec=10)
+                stdout = out.stdout or ""
+            except Exception:
+                stdout = ""
+            try:
+                err = await environment.exec("cat /tmp/agent_stderr.txt", timeout_sec=10)
+                stderr = err.stdout or ""
+            except Exception:
+                stderr = ""
+            raise  # Re-raise so Harbor records the timeout
+        finally:
+            # Log output
+            if stdout:
+                self.logger.info(f"stdout:\n{stdout}")
+            if stderr:
+                self.logger.warning(f"stderr:\n{stderr}")
 
-        # Log output
-        if result.stdout:
-            self.logger.info(f"stdout:\n{result.stdout}")
-        if result.stderr:
-            self.logger.warning(f"stderr:\n{result.stderr}")
+            # Write output to logs directory for debugging
+            if self.logs_dir:
+                (self.logs_dir / "agent_stdout.txt").write_text(stdout)
+                (self.logs_dir / "agent_stderr.txt").write_text(stderr)
 
-        # Write output to logs directory for debugging
-        if self.logs_dir:
-            (self.logs_dir / "agent_stdout.txt").write_text(result.stdout or "")
-            (self.logs_dir / "agent_stderr.txt").write_text(result.stderr or "")
-
-        # TODO: Parse token counts from runner output and populate context
-        # The runner outputs "[Tokens: in=X, out=Y]" which we could parse
-        # context.n_input_tokens = ...
-        # context.n_output_tokens = ...
+            # Retrieve telemetry DB for full tool traces
+            if self.logs_dir:
+                try:
+                    await environment.download_file(
+                        telemetry_db, self.logs_dir / "telemetry.db"
+                    )
+                except Exception:
+                    self.logger.debug("No telemetry DB to retrieve")
 
 
 # For Harbor's import_path to work
