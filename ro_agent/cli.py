@@ -44,7 +44,10 @@ from .observability.context import TelemetryContext
 # Config directory for ro-agent data
 CONFIG_DIR = Path.home() / ".config" / "ro-agent"
 HISTORY_FILE = CONFIG_DIR / "history"
-DEFAULT_PROMPT_FILE = CONFIG_DIR / "default-system.md"
+DEFAULT_PROMPT_FILE = CONFIG_DIR / "default.md"
+
+# Built-in default prompt (ships with package)
+BUILTIN_PROMPT_FILE = Path(__file__).parent / "prompts" / "default.md"
 
 # Tool output preview lines (0 to disable)
 TOOL_PREVIEW_LINES = int(os.getenv("RO_AGENT_PREVIEW_LINES", "6"))
@@ -861,6 +864,31 @@ def main(
     # Track when session started
     session_started = datetime.now()
 
+    # Load capability profile (needed for prompt rendering)
+    if profile:
+        try:
+            capability_profile = load_profile(profile)
+        except (ValueError, FileNotFoundError) as e:
+            console.print(f"[red]Profile error: {e}[/red]")
+            raise typer.Exit(1) from e
+    else:
+        capability_profile = CapabilityProfile.readonly()
+
+    # Apply command-line overrides to profile
+    if shell_mode:
+        try:
+            capability_profile.shell = ShellMode(shell_mode)
+        except ValueError:
+            console.print(f"[red]Invalid shell mode: {shell_mode}. Use 'restricted' or 'unrestricted'[/red]")
+            raise typer.Exit(1)
+
+    if file_write_mode:
+        try:
+            capability_profile.file_write = FileWriteMode(file_write_mode)
+        except ValueError:
+            console.print(f"[red]Invalid file write mode: {file_write_mode}. Use 'off', 'create-only', or 'full'[/red]")
+            raise typer.Exit(1)
+
     # Build system prompt and initial prompt (skip if resuming)
     initial_prompt: str | None = None
     system_prompt: str = ""
@@ -921,11 +949,15 @@ def main(
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(1) from exc
 
-        # Provide standard environment variables
-        prompt_vars: dict[str, str] = {
+        # Provide profile-aware variables (same as builtin)
+        prompt_vars = {
             "platform": platform.system(),
             "home_dir": str(Path.home()),
             "working_dir": resolved_working_dir,
+            "profile_name": capability_profile.name,
+            "shell_mode": capability_profile.shell.value,
+            "file_write_mode": capability_profile.file_write.value,
+            "database_mode": capability_profile.database.value,
         }
 
         try:
@@ -934,12 +966,35 @@ def main(
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(1) from exc
     else:
-        # Built-in default system prompt
-        system_prompt = DEFAULT_SYSTEM_PROMPT.format(
-            platform=platform.system(),
-            home_dir=str(Path.home()),
-            working_dir=resolved_working_dir,
-        )
+        # Built-in default prompt with profile-aware variables
+        try:
+            loaded_prompt = load_prompt(BUILTIN_PROMPT_FILE)
+        except (FileNotFoundError, ValueError) as exc:
+            # Fallback to inline prompt if file is missing
+            console.print(f"[yellow]Warning: Could not load default prompt: {exc}[/yellow]")
+            system_prompt = DEFAULT_SYSTEM_PROMPT.format(
+                platform=platform.system(),
+                home_dir=str(Path.home()),
+                working_dir=resolved_working_dir,
+            )
+            loaded_prompt = None
+
+        if loaded_prompt:
+            # Provide profile-aware variables
+            prompt_vars = {
+                "platform": platform.system(),
+                "home_dir": str(Path.home()),
+                "working_dir": resolved_working_dir,
+                "profile_name": capability_profile.name,
+                "shell_mode": capability_profile.shell.value,
+                "file_write_mode": capability_profile.file_write.value,
+                "database_mode": capability_profile.database.value,
+            }
+            try:
+                system_prompt, initial_prompt = prepare_prompt(loaded_prompt, prompt_vars)
+            except ValueError as exc:
+                console.print(f"[red]Prompt error: {exc}[/red]")
+                raise typer.Exit(1) from exc
 
     # Set up components - use resumed conversation if available
     if resumed_conversation:
@@ -959,31 +1014,6 @@ def main(
     else:
         session = Session(system_prompt=system_prompt)
         effective_model = model
-
-    # Load capability profile
-    if profile:
-        try:
-            capability_profile = load_profile(profile)
-        except (ValueError, FileNotFoundError) as e:
-            console.print(f"[red]Profile error: {e}[/red]")
-            raise typer.Exit(1) from e
-    else:
-        capability_profile = CapabilityProfile.readonly()
-
-    # Apply command-line overrides
-    if shell_mode:
-        try:
-            capability_profile.shell = ShellMode(shell_mode)
-        except ValueError:
-            console.print(f"[red]Invalid shell mode: {shell_mode}. Use 'restricted' or 'unrestricted'[/red]")
-            raise typer.Exit(1)
-
-    if file_write_mode:
-        try:
-            capability_profile.file_write = FileWriteMode(file_write_mode)
-        except ValueError:
-            console.print(f"[red]Invalid file write mode: {file_write_mode}. Use 'off', 'create-only', or 'full'[/red]")
-            raise typer.Exit(1)
 
     registry = create_registry(working_dir=resolved_working_dir, profile=capability_profile)
     client = ModelClient(model=effective_model, base_url=base_url)

@@ -1262,6 +1262,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "cerebras-cloud-sdk" },
+    { name = "jinja2" },
     { name = "mysql-connector-python" },
     { name = "openai" },
     { name = "openpyxl" },
@@ -1299,6 +1300,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cerebras-cloud-sdk", specifier = ">=1.64.1" },
+    { name = "jinja2", specifier = ">=3.1.6" },
     { name = "mysql-connector-python", specifier = ">=8.0" },
     { name = "openai", specifier = ">=2.14.0" },
     { name = "openpyxl", specifier = ">=3.1.0" },

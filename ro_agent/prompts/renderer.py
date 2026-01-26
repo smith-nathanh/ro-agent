@@ -1,32 +1,55 @@
-"""Render prompts with variable substitution."""
+"""Render prompts with Jinja2 templating."""
 
-import re
 from typing import Any
+
+from jinja2 import Environment, BaseLoader, TemplateSyntaxError, UndefinedError
 
 from .loader import Prompt
 
 
+def _create_jinja_env() -> Environment:
+    """Create a Jinja2 environment with useful defaults."""
+    env = Environment(
+        loader=BaseLoader(),
+        # Keep trailing newlines
+        keep_trailing_newline=True,
+        # Trim whitespace around blocks for cleaner output
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
+    return env
+
+
+# Shared environment instance
+_jinja_env = _create_jinja_env()
+
+
 def render_string(template_str: str, variables: dict[str, Any]) -> str:
-    """Substitute {{ variable }} placeholders in a string.
+    """Render a Jinja2 template string with variables.
+
+    Supports full Jinja2 syntax including:
+    - Variable substitution: {{ variable }}
+    - Conditionals: {% if condition %}...{% endif %}
+    - Loops: {% for item in list %}...{% endfor %}
+    - Filters: {{ value | upper }}
 
     Args:
-        template_str: String with {{ var }} placeholders
+        template_str: Jinja2 template string
         variables: Dict of variable name -> value
 
     Returns:
-        String with placeholders replaced
+        Rendered string
 
     Raises:
-        ValueError: If a required variable is missing
+        ValueError: If template syntax is invalid or required variable is missing
     """
-
-    def replace(match: re.Match) -> str:
-        var_name = match.group(1).strip()
-        if var_name not in variables:
-            raise ValueError(f"Missing variable: {var_name}")
-        return str(variables[var_name])
-
-    return re.sub(r"\{\{\s*(\w+)\s*\}\}", replace, template_str)
+    try:
+        template = _jinja_env.from_string(template_str)
+        return template.render(**variables)
+    except TemplateSyntaxError as e:
+        raise ValueError(f"Template syntax error at line {e.lineno}: {e.message}") from e
+    except UndefinedError as e:
+        raise ValueError(f"Missing variable: {e}") from e
 
 
 def prepare_prompt(
