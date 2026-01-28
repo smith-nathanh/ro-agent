@@ -152,6 +152,7 @@ at `validate_config.py`.
 - **Multiple database backends**: SQLite, PostgreSQL, MySQL, Oracle, Vertica—with configurable read-only or mutation access
 - **Prompt templates**: Markdown files with variable substitution for repeatable investigations
 - **Observability**: Session tracking, token usage, tool execution metrics with Streamlit dashboard
+- **Session management**: List and kill running agents from another terminal with `ro-agent ps` and `ro-agent kill`
 - **Evaluation integrations**: AgentBench (DBBench, OS Interaction) and Harbor/TerminalBench
 
 ## Capability Profiles
@@ -276,6 +277,30 @@ In interactive mode:
 | `/clear` | Clear screen |
 | `exit` | Quit |
 
+## Session Management
+
+List and kill running agent sessions from a separate terminal. Useful when you have multiple agents running across terminal tabs and want to stop specific ones without hunting for the right window.
+
+```bash
+# List running agents
+uv run ro-agent ps
+#   a1b2c3d4  running  gpt-5-mini      45s  analyze the logs in /var/log/app...
+#   e5f6g7h8  running  gpt-5-mini      32s  find all database schemas in...
+
+# Kill one by session ID prefix
+uv run ro-agent kill a1b2
+
+# Kill all running agents
+uv run ro-agent kill --all
+
+# Clean up stale entries from crashed agents
+uv run ro-agent ps --cleanup
+```
+
+Killed agents exit with `cancelled` status in telemetry, with `cancel_source: "kill_command"` in session metadata to distinguish from Ctrl+C cancellations.
+
+The signal protocol uses files in `~/.config/ro-agent/signals/` (override with `RO_AGENT_SIGNAL_DIR`). Each agent writes a `.running` file on start and removes it on exit. The `kill` command writes a `.cancel` file that the agent detects between tool calls.
+
 ## Observability
 
 Track agent sessions, token usage, and tool executions with the built-in observability system.
@@ -363,6 +388,12 @@ Options:
 
 # Launch observability dashboard
 uv run ro-agent dashboard [--port PORT] [--db PATH]
+
+# List running agent sessions
+uv run ro-agent ps [--cleanup]
+
+# Kill running agent sessions
+uv run ro-agent kill [PREFIX] [--all]
 ```
 
 ## Evaluations

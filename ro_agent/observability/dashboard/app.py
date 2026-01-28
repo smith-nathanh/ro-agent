@@ -6,8 +6,8 @@ from pathlib import Path
 
 import streamlit as st
 
-from ..config import DEFAULT_TELEMETRY_DB
-from ..storage.sqlite import TelemetryStorage, SessionSummary, SessionDetail
+from ro_agent.observability.config import DEFAULT_TELEMETRY_DB
+from ro_agent.observability.storage.sqlite import TelemetryStorage, SessionSummary, SessionDetail
 
 
 def get_storage() -> TelemetryStorage:

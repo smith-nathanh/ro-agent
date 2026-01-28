@@ -100,6 +100,7 @@ class Agent:
         approval_callback: ApprovalCallback | None = None,
         context_limit: int = DEFAULT_CONTEXT_LIMIT,
         auto_compact: bool = True,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> None:
         self._session = session
         self._registry = registry
@@ -108,6 +109,7 @@ class Agent:
         self._context_limit = context_limit
         self._auto_compact = auto_compact
         self._cancel_requested = False
+        self._cancel_check = cancel_check
 
     def request_cancel(self) -> None:
         """Request cancellation of the current turn."""
@@ -118,8 +120,17 @@ class Agent:
         self._cancel_requested = False
 
     def is_cancelled(self) -> bool:
-        """Check if cancellation has been requested."""
-        return self._cancel_requested
+        """Check if cancellation has been requested.
+
+        Checks both the in-process flag (set by request_cancel) and the
+        optional external cancel_check callback (e.g., file-based signal).
+        """
+        if self._cancel_requested:
+            return True
+        if self._cancel_check is not None and self._cancel_check():
+            self._cancel_requested = True  # latch so subsequent checks are fast
+            return True
+        return False
 
     async def compact(
         self, custom_instructions: str = "", trigger: str = "manual"

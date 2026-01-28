@@ -5,7 +5,8 @@ import os
 import platform
 import re
 import signal
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Iterable, Optional
 
@@ -40,6 +41,7 @@ from .tools.registry import ToolRegistry
 from .observability.config import ObservabilityConfig, DEFAULT_TELEMETRY_DB
 from .observability.processor import ObservabilityProcessor, create_processor
 from .observability.context import TelemetryContext
+from .signals import AgentInfo, SignalManager
 
 # Config directory for ro-agent data
 CONFIG_DIR = Path.home() / ".config" / "ro-agent"
@@ -457,6 +459,8 @@ async def run_interactive(
     session_started: datetime,
     conversation_id: str | None = None,
     observability: ObservabilityProcessor | None = None,
+    signal_manager: SignalManager | None = None,
+    session_id: str | None = None,
 ) -> None:
     """Run an interactive REPL session."""
     # Ensure config directory exists
@@ -554,13 +558,24 @@ async def run_interactive(
 
                 async for event in events:
                     if event.type == "cancelled":
-                        console.print("[dim]Turn cancelled[/dim]")
+                        # Check if this was an external kill signal
+                        if signal_manager and session_id and signal_manager.is_cancelled(session_id):
+                            session_status = "cancelled"
+                            if observability:
+                                observability.context.metadata["cancel_source"] = "kill_command"
+                            console.print("[yellow]Killed by ro-agent kill[/yellow]")
+                        else:
+                            console.print("[dim]Turn cancelled[/dim]")
                         break
                     handle_event(event)
             finally:
                 # Remove signal handler after turn
                 if platform.system() != "Windows":
                     loop.remove_signal_handler(signal.SIGINT)
+
+            # Exit session if killed externally
+            if session_status == "cancelled":
+                break
     except Exception:
         session_status = "error"
         raise
@@ -589,6 +604,8 @@ async def run_single(
     agent: Agent,
     prompt: str,
     observability: ObservabilityProcessor | None = None,
+    signal_manager: SignalManager | None = None,
+    session_id: str | None = None,
 ) -> None:
     """Run a single prompt and exit."""
     # Start observability session if enabled
@@ -613,7 +630,13 @@ async def run_single(
 
         async for event in events:
             if event.type == "cancelled":
-                console.print("[dim]Cancelled[/dim]")
+                if signal_manager and session_id and signal_manager.is_cancelled(session_id):
+                    session_status = "cancelled"
+                    if observability:
+                        observability.context.metadata["cancel_source"] = "kill_command"
+                    console.print("[yellow]Killed by ro-agent kill[/yellow]")
+                else:
+                    console.print("[dim]Cancelled[/dim]")
                 break
             handle_event(event)
     except Exception:
@@ -631,6 +654,8 @@ async def run_single_with_output(
     prompt: str,
     output_path: str,
     observability: ObservabilityProcessor | None = None,
+    signal_manager: SignalManager | None = None,
+    session_id: str | None = None,
 ) -> bool:
     """Run a single prompt and write final response to file.
 
@@ -671,7 +696,13 @@ async def run_single_with_output(
 
         async for event in events:
             if event.type == "cancelled":
-                console.print("[dim]Cancelled[/dim]")
+                if signal_manager and session_id and signal_manager.is_cancelled(session_id):
+                    session_status = "cancelled"
+                    if observability:
+                        observability.context.metadata["cancel_source"] = "kill_command"
+                    console.print("[yellow]Killed by ro-agent kill[/yellow]")
+                else:
+                    console.print("[dim]Cancelled[/dim]")
                 cancelled = True
                 break
             handle_event(event)
@@ -710,7 +741,7 @@ def main(
     model: Annotated[
         str,
         typer.Option("--model", "-m", help="Model to use"),
-    ] = os.getenv("OPENAI_MODEL", "gpt-5.1"),
+    ] = os.getenv("OPENAI_MODEL", "gpt-5-mini"),
     base_url: Annotated[
         Optional[str],
         typer.Option("--base-url", help="API base URL for OpenAI-compatible endpoints"),
@@ -863,6 +894,10 @@ def main(
 
     # Track when session started
     session_started = datetime.now()
+
+    # Generate session ID and set up signal manager for ps/kill support
+    session_id = str(uuid.uuid4())
+    signal_manager = SignalManager()
 
     # Load capability profile (needed for prompt rendering)
     if profile:
@@ -1024,6 +1059,7 @@ def main(
         registry=registry,
         client=client,
         approval_callback=approval_handler.check_approval,
+        cancel_check=lambda: signal_manager.is_cancelled(session_id),
     )
 
     # Create observability processor if team_id and project_id provided
@@ -1042,6 +1078,8 @@ def main(
                     model=effective_model,
                     profile=capability_profile.name if hasattr(capability_profile, 'name') else str(capability_profile.shell.value),
                 )
+                # Use same session ID as signal manager for consistency
+                context.session_id = session_id
                 observability_processor = ObservabilityProcessor(obs_config, context)
                 console.print(
                     f"[dim]Telemetry: {obs_config.tenant.team_id}/{obs_config.tenant.project_id}[/dim]"
@@ -1053,27 +1091,48 @@ def main(
     # Positional prompt overrides template's initial_prompt
     run_prompt = prompt if prompt else initial_prompt
 
-    if run_prompt:
-        # Single prompt mode (from --prompt or positional arg)
-        if output:
-            # Capture output to file
-            asyncio.run(run_single_with_output(agent, run_prompt, output, observability_processor))
+    # Register this agent session for ps/kill support
+    agent_info = AgentInfo(
+        session_id=session_id,
+        pid=os.getpid(),
+        model=effective_model,
+        instruction_preview=(run_prompt or "interactive session")[:100],
+        started_at=datetime.now(timezone.utc).isoformat(),
+    )
+    signal_manager.register(agent_info)
+
+    try:
+        if run_prompt:
+            # Single prompt mode (from --prompt or positional arg)
+            if output:
+                # Capture output to file
+                asyncio.run(run_single_with_output(
+                    agent, run_prompt, output, observability_processor,
+                    signal_manager=signal_manager, session_id=session_id,
+                ))
+            else:
+                asyncio.run(run_single(
+                    agent, run_prompt, observability_processor,
+                    signal_manager=signal_manager, session_id=session_id,
+                ))
         else:
-            asyncio.run(run_single(agent, run_prompt, observability_processor))
-    else:
-        asyncio.run(
-            run_interactive(
-                agent,
-                approval_handler,
-                session,
-                effective_model,
-                resolved_working_dir,
-                conversation_store,
-                session_started,
-                conversation_id,
-                observability_processor,
+            asyncio.run(
+                run_interactive(
+                    agent,
+                    approval_handler,
+                    session,
+                    effective_model,
+                    resolved_working_dir,
+                    conversation_store,
+                    session_started,
+                    conversation_id,
+                    observability_processor,
+                    signal_manager=signal_manager,
+                    session_id=session_id,
+                )
             )
-        )
+    finally:
+        signal_manager.deregister(session_id)
 
 
 @app.command()
@@ -1123,6 +1182,91 @@ def dashboard(
     except subprocess.CalledProcessError as e:
         console.print(f"[red]Dashboard failed to start: {e}[/red]")
         raise typer.Exit(1) from e
+
+
+@app.command()
+def ps(
+    cleanup: Annotated[
+        bool,
+        typer.Option("--cleanup", help="Remove stale entries from crashed agents"),
+    ] = False,
+) -> None:
+    """List running ro-agent sessions."""
+    sm = SignalManager()
+
+    if cleanup:
+        cleaned = sm.cleanup_stale()
+        if cleaned:
+            for sid in cleaned:
+                console.print(f"[dim]Cleaned: {sid[:8]}[/dim]")
+            console.print(f"[green]Removed {len(cleaned)} stale entries[/green]")
+        else:
+            console.print("[dim]No stale entries found[/dim]")
+
+    agents = sm.list_running()
+    if not agents:
+        console.print("[dim]No running agents[/dim]")
+        raise typer.Exit(0)
+
+    now = datetime.now(timezone.utc)
+    for info in agents:
+        short_id = info.session_id[:8]
+        try:
+            started = datetime.fromisoformat(info.started_at)
+            elapsed = now - started
+            secs = int(elapsed.total_seconds())
+            if secs < 60:
+                duration = f"{secs}s"
+            elif secs < 3600:
+                duration = f"{secs // 60}m{secs % 60}s"
+            else:
+                duration = f"{secs // 3600}h{(secs % 3600) // 60}m"
+        except ValueError:
+            duration = "?"
+        preview = info.instruction_preview[:50]
+        if len(info.instruction_preview) > 50:
+            preview += "..."
+        console.print(
+            f"  [cyan]{short_id}[/cyan]  [green]running[/green]  "
+            f"[dim]{info.model:<14}[/dim]  {duration:>6}  {preview}"
+        )
+
+
+@app.command()
+def kill(
+    prefix: Annotated[
+        Optional[str],
+        typer.Argument(help="Session ID prefix to kill"),
+    ] = None,
+    all: Annotated[
+        bool,
+        typer.Option("--all", help="Kill all running agents"),
+    ] = False,
+) -> None:
+    """Kill running ro-agent sessions by session ID prefix."""
+    sm = SignalManager()
+
+    if all:
+        cancelled = sm.cancel_all()
+        if cancelled:
+            for sid in cancelled:
+                console.print(f"[yellow]Cancelled: {sid[:8]}[/yellow]")
+            console.print(f"[green]Sent cancel signal to {len(cancelled)} agents[/green]")
+        else:
+            console.print("[dim]No running agents to kill[/dim]")
+        return
+
+    if not prefix:
+        console.print("[red]Provide a session ID prefix, or use --all[/red]")
+        raise typer.Exit(1)
+
+    cancelled = sm.cancel_by_prefix(prefix)
+    if cancelled:
+        for sid in cancelled:
+            console.print(f"[yellow]Cancelled: {sid[:8]}[/yellow]")
+    else:
+        console.print(f"[red]No running agents matching prefix '{prefix}'[/red]")
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":
